@@ -89,7 +89,14 @@ module WallCutter
       inst.erase! # plug blocks the verification ray while it sits in the hole
       check('drill: ray clears along axis') do
         hit = WallCutter.ray(model, Geom::Point3d.new(540.0, -20.0, 78.0), Y_AXIS)
-        puts("  diag: drill ray hit=#{hit ? hit[0].to_a.map { |x| x.round(1) }.inspect : 'nil'}") if hit
+        if hit
+          puts "  diag: drill ray hit=#{hit[0].to_a.map { |x| x.round(1) }.inspect}"
+          ents.grep(Sketchup::Face).each do |f|
+            c = f.bounds.center
+            next unless (c.x - 540).abs < 40 && (c.z - 78).abs < 40 && c.y > -25 && c.y < 20
+            puts "  face c=[#{c.x.round(1)},#{c.y.round(1)},#{c.z.round(1)}] area=#{f.area.round(0)} n=#{f.normal.to_a.map { |x| x.round(1) }.inspect} loop=#{f.outer_loop.vertices.size}"
+          end
+        end
         hit.nil?
       end
       loose = ents.add_instance(defn, Geom::Transformation.new(Geom::Vector3d.new(1200.0, 0, 1200.0)))
