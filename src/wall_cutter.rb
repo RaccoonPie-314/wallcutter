@@ -34,10 +34,12 @@ module WallCutter
     UI.messagebox(msg) unless quiet
   end
 
+  # definition.bounds is authoritative-local; ComponentInstance#bounds turned out to be
+  # world-space in SketchUp 2026 (double-transforming it put the center across the map).
   def self.world_bounds(inst)
     t  = inst.transformation
     bb = Geom::BoundingBox.new
-    bb_corners(inst.bounds).each { |pt| bb.add(pt.transform(t)) }
+    bb_corners(inst.definition.bounds).each { |pt| bb.add(pt.transform(t)) }
     bb
   end
 
