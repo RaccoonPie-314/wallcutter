@@ -1,9 +1,0 @@
---- probe start ---
-rect add_face => Sketchup::Face; faces 6 -> 7
-FAILS: NoMethodError: undefined method `center' for #<Sketchup::Face:0x000000013765e540>
-/Users/mengly/Documents/Qoder/wallcutter/dev/probe.rb:15:in `block in <top (required)>'
-/Users/mengly/Documents/Qoder/wallcutter/dev/probe.rb:15:in `each'
-/Users/mengly/Documents/Qoder/wallcutter/dev/probe.rb:15:in `find'
-/Users/mengly/Documents/Qoder/wallcutter/dev/probe.rb:15:in `<top (required)>'
-/Users/mengly/Library/Application Support/SketchUp 2026/SketchUp/Plugins/zz_wallcutter_headless_probe.rb:10:in `load'
---- probe end ---

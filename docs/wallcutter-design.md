@@ -4,6 +4,15 @@ Date: 2026-10-11
 Status: approved in brainstorming dialogue
 Target: personal / in-house tool, current SketchUp (2021+), macOS. Packaged as an unsigned `.rbz`.
 
+## Implementation update (2026-10-11, verified)
+
+SketchUp 2026 removed the APIs this design assumed: `Entities#clip`, `Geom::SolidMunger`,
+`Sketchup::PathFromEntity`, `Entities#add_edge`, `Face#center`, `Vector3d` scalar `*`/`scale`,
+and the `XVECTOR`/`YVECTOR`/`ZVECTOR` globals. The engine instead uses split-and-pushpull
+(`add_face` rect splits the entry face; `pushpull` extrudes; rect-sized cap faces at the exit
+plane are erased; layered walls pair consecutive parallel faces). See
+`src/cut_engine.rb` — the code is now the source of truth for these mechanics.
+
 ## Summary
 
 One cutting engine, two thin entry points:
