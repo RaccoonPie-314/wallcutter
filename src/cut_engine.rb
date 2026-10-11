@@ -111,13 +111,15 @@ module WallCutter
       exit_center = Geom::Point3d.new(center.x + un.x * thickness,
                                       center.y + un.y * thickness,
                                       center.z + un.z * thickness)
-      unless clear_hole_caps(ents, exit_center, un, area)
-        rect2 = rect.map { |pt| Geom::Point3d.new(pt.x + un.x * thickness,
-                                                  pt.y + un.y * thickness,
-                                                  pt.z + un.z * thickness) }
-        ents.add_face(rect2)
-        clear_hole_caps(ents, exit_center, un, area)
-      end
+      clear_hole_caps(ents, exit_center, un, area)
+      # Unconditional exit split: clearing a membrane beyond the far skin must not hide
+      # the still-whole exit face. rect2 splits it; if the hole was already open, the
+      # stray face it creates is cleared by the second pass.
+      rect2 = rect.map { |pt| Geom::Point3d.new(pt.x + un.x * thickness,
+                                                pt.y + un.y * thickness,
+                                                pt.z + un.z * thickness) }
+      ents.add_face(rect2)
+      clear_hole_caps(ents, exit_center, un, area)
       true
     end
 

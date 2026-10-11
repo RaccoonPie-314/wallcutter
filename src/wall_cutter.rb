@@ -130,8 +130,9 @@ module WallCutter
     bb = world_bounds(inst)
     u, v = side_axes(inst, n)
     corners = bb_corners(bb)
+    ref = bb.center
     ext = lambda do |axis|
-      cs = corners.map { |pt| pt % axis }
+      cs = corners.map { |pt| (pt - ref) % axis } # Point3d%Vector invalid; subtract first
       cs.max - cs.min
     end
     width  = ext.call(u) + 2 * PLANE_PAD
