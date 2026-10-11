@@ -93,13 +93,11 @@ module WallCutter
     end
 
     def activate
-      puts '[WallCutter] tool activate'
       Sketchup.status_text = 'WallCutter: click a wall face, adjust in panel, Enter to cut'
       show_dialog
     end
 
     def deactivate(view)
-      puts '[WallCutter] tool deactivate'
       @dlg.close if @dlg && @dlg.visible?
       Sketchup.status_text = ''
       view.invalidate
@@ -120,7 +118,6 @@ module WallCutter
       @face = path.grep(Sketchup::Face).last
       best = ph.best_picked
       @face ||= best if best.is_a?(Sketchup::Face)
-      puts "[WallCutter] click #{x},#{y} best=#{best.class} path=#{path.map { |e| e.class }.inspect} face=#{@face.class}"
       view.invalidate
     end
 
@@ -173,7 +170,6 @@ module WallCutter
     rescue StandardError => e
       unless @draw_err_shown # report the full error once, then stay quiet per frame
         @draw_err_shown = true
-        puts "[WallCutter] draw error: #{e.class}: #{e.message}"
         puts(e.backtrace.first(4).map { |l| "  #{l}" })
         report("draw error (see Ruby Console): #{e.class}: #{e.message}")
       end

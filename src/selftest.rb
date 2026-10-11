@@ -80,8 +80,6 @@ module WallCutter
       inst = ents.add_instance(defn, Geom::Transformation.new(Geom::Vector3d.new(540.0, 6.0, 54.0)))
       model.selection.add(inst)
       before = ents.grep(Sketchup::Face).length
-      axis_diag = WallCutter.detect_axis(inst, true)
-      puts("  diag: axis=#{axis_diag.nil? ? 'nil' : axis_diag[0].to_a.map { |x| x.round(2) }.inspect} span=#{axis_diag&.last&.round(1)}")
       ok = WallCutter.drill_selected(quiet: true)
       model.selection.clear
       check('drill: sandwich axis found + cut committed') { ok }

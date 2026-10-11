@@ -66,7 +66,7 @@ module WallCutter
   # component footprint, on both sides within tolerance. That pair is the wall.
   # ponytail: scans root entities only; walls nested in groups are drilled via Smart
   # Cutout's explicit face pick instead.
-  def self.detect_axis(inst, diag = false)
+  def self.detect_axis(inst)
     bb      = world_bounds(inst)
     center  = bb.center
     corners = bb_corners(bb)
@@ -89,7 +89,6 @@ module WallCutter
           back = off if back.nil? || off < back
         end
       end
-      puts("  axis #{ax.to_a.map { |x| x.round(2) }.inspect}: front=#{front.inspect} back=#{back.inspect} half=#{half.round(1)} faces=#{faces.size}") if diag
       next if front.nil? || back.nil?
       origin = Geom::Point3d.new(center.x + ax.x * front, center.y + ax.y * front,
                                  center.z + ax.z * front)
@@ -148,7 +147,6 @@ module WallCutter
     fail_with('Cut removed nothing — is the wall closed geometry?', quiet) unless ok
     ok
   rescue StandardError => e
-    puts("  drill error: #{e.class}: #{e.message} @ #{e.backtrace.first}") if quiet
     fail_with("WallCutter drill error: #{e.message}", quiet)
     false
   end
