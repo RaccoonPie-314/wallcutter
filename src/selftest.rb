@@ -23,6 +23,8 @@ module WallCutter
       f = ents.add_face(pts)
       f.reverse! unless f.normal.y > 0
       f.pushpull(thick)
+      n = ents.grep(Sketchup::Face).length
+      raise "box_wall at x=#{x0} extruded nothing (faces=#{n})" if n < 6
       f
     end
 
@@ -116,7 +118,11 @@ module WallCutter
     def self.run
       # Start from a clean slate: a recovered/contaminated model (SketchUp restores
       # unsaved work after a force-quit) produces duplicate coplanar faces and lies.
-      Sketchup.active_model.entities.clear!
+      model = Sketchup.active_model
+      model.entities.clear!
+      # Explicit transaction around everything: pushpull silently no-ops when the
+      # recovered undo stack leaves an unbalanced operation open.
+      model.start_operation('WallCutter selftest', true)
       %i[run_engine run_group run_drill run_frame].each do |m|
         begin
           send(m)
@@ -124,6 +130,7 @@ module WallCutter
           puts "FAIL #{m} crashed: #{e.class}: #{e.message} @ #{e.backtrace.first}"
         end
       end
+      model.commit_operation
       puts 'selftest done'
     end
   end
