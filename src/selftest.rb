@@ -114,6 +114,9 @@ module WallCutter
     end
 
     def self.run
+      # Start from a clean slate: a recovered/contaminated model (SketchUp restores
+      # unsaved work after a force-quit) produces duplicate coplanar faces and lies.
+      Sketchup.active_model.entities.clear!
       %i[run_engine run_group run_drill run_frame].each do |m|
         begin
           send(m)

@@ -54,6 +54,10 @@ module WallCutter
         while i + 1 < planes.size
           t_in  = planes[i][0]
           t_out = planes[i + 1][0]
+          if t_out - t_in < 0.001
+            i += 1 # duplicate coplanar faces (zero-thickness pair): advance by one
+            next
+          end
           cut_any = true if cut_layer(ents, planes[i][1], o, un, ut, vt, wl, hl, t_in, t_out - t_in)
           i += 2 # pushpull already holed the exit face; skip it as a future entry
         end
