@@ -22,6 +22,7 @@ module WallCutter
   module CutEngine
     PRIDE_IN = 1.0 # overshoot past the exit face so the hole comes out clean
 
+
     # origin/n/u/v in world coords; path = Group/ComponentInstance chain from root to the
     # container owning the face ([] for top level). Returns false if nothing could be cut.
     def self.cut(origin, n, u, v, width, height, depth, path: [])
@@ -47,6 +48,7 @@ module WallCutter
         }.map { |f| [plane_t(f, o, un), f] }
           .select { |t, f| t >= -0.001 && t <= dl + 0.001 && bounds_hold?(f.bounds, o, un, ut, vt, t, wl, hl) }
           .sort_by(&:first)
+        puts "[WC] planes=#{planes.size} ts=#{planes.map { |p| p[0].round(2) }.inspect} ents=#{ents.length}" if defined?(WallCutter::SelfTest)
         cut_any = false
         i = 0
         while i + 1 < planes.size
@@ -84,11 +86,14 @@ module WallCutter
         corner(center, ut, su * w / 2.0, vt, sv * h / 2.0)
       end
       rf = ents.add_face(rect)
+      puts "[WC] layer t=#{t.round(2)} add_face=#{rf.class}" if defined?(WallCutter::SelfTest)
       return false unless rf
       # The split only really happened if the new face shares an edge with the target;
       # otherwise add_face dropped a floating rect (rect outside that face) -> erase it.
       inner = rect_face_at(ents, center, area)
-      unless inner && inner.edges.any? { |e| target.edges.include?(e) }
+      shared = inner ? inner.edges.any? { |e| target.valid? && target.edges.include?(e) } : false
+      puts "[WC] layer inner=#{inner.class} shared=#{shared}" if defined?(WallCutter::SelfTest)
+      unless inner && shared
         rf.erase! if rf.valid?
         return false
       end
