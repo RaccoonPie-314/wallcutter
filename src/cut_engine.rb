@@ -11,6 +11,12 @@ module WallCutter
     'Opening' => { width: 48.0, height: 48.0, sill: 24.0 }
   }.freeze
 
+  # SketchUp's legacy global axis constants (X_AXIS/Y_AXIS/Z_AXIS) are not
+  # defined in this runtime; own constants remove all dependence on them.
+  X_AXIS = Geom::Vector3d.new(1, 0, 0).freeze
+  Y_AXIS = Geom::Vector3d.new(0, 1, 0).freeze
+  Z_AXIS = Geom::Vector3d.new(0, 0, 1).freeze
+
   module CutEngine
     PRIDE_IN = 1.0 # cutter starts this far outside the face so clip never starts coplanar
 

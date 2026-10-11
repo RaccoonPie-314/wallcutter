@@ -11,7 +11,7 @@ module WallCutter
 
     def initialize(face, into_normal, tr = Geom::Transformation.new)
       @n = into_normal.normalize
-      vv = ZVECTOR - @n * (ZVECTOR % @n)
+      vv = Z_AXIS - @n * (Z_AXIS % @n)
       if vv.length < 0.001
         edge = face.outer_loop.edges.max_by(&:length)
         @u = edge.line[1].transform(tr).normalize
