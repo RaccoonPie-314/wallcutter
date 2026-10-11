@@ -43,7 +43,7 @@ module WallCutter
     bb     = world_bounds(inst)
     center = bb.center
     t      = inst.transformation
-    [Geom::XVECTOR, Geom::YVECTOR, Geom::ZVECTOR].each do |a|
+    [XVECTOR, YVECTOR, ZVECTOR].each do |a|
       ax = a.transform(t).normalize
       half = (0..7).map { |i| ((bb.corner(i) - center) % ax).abs }.max
       f = model.raytest(center, ax.reverse)
@@ -60,7 +60,7 @@ module WallCutter
   # Two world side-axes perpendicular to the drill axis, from the instance's local axes.
   def self.side_axes(inst, n)
     t = inst.transformation
-    cands = [Geom::XVECTOR, Geom::YVECTOR, Geom::ZVECTOR].map { |a| a.transform(t).normalize }
+    cands = [XVECTOR, YVECTOR, ZVECTOR].map { |a| a.transform(t).normalize }
     side  = cands.select { |a| (a % n).abs < 0.5 }
     raise 'WallCutter drill: could not derive side axes' if side.size < 2
     [side[0], side[1]]

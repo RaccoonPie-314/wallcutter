@@ -31,16 +31,16 @@ module WallCutter
       ents  = model.entities
       box_wall(ents, 0, 120.0, 108.0, 12.0) # 10ft x 9ft x 1ft wall at x=0
       faces_before = ents.grep(Sketchup::Face).length
-      ok = CutEngine.cut(Geom::Point3d.new(60.0, 0, 54.0), Geom::YVECTOR,
-                         Geom::XVECTOR, Geom::ZVECTOR, 36.0, 48.0, 14.0)
+      ok = CutEngine.cut(Geom::Point3d.new(60.0, 0, 54.0), YVECTOR,
+                         XVECTOR, ZVECTOR, 36.0, 48.0, 14.0)
       check('engine cut commits')           { ok }
       check('front skin split (hole made)') { ents.grep(Sketchup::Face).length > faces_before }
       check('ray through opening clears') do
-        model.raytest(Geom::Point3d.new(60.0, -20.0, 54.0), Geom::YVECTOR).nil?
+        model.raytest(Geom::Point3d.new(60.0, -20.0, 54.0), YVECTOR).nil?
       end
       check('no-op cut returns false') do
-        !CutEngine.cut(Geom::Point3d.new(60.0, -360.0, 54.0), Geom::YVECTOR,
-                       Geom::XVECTOR, Geom::ZVECTOR, 36.0, 48.0, 1.0)
+        !CutEngine.cut(Geom::Point3d.new(60.0, -360.0, 54.0), YVECTOR,
+                       XVECTOR, ZVECTOR, 36.0, 48.0, 1.0)
       end
     end
 
@@ -52,8 +52,8 @@ module WallCutter
       before = grp.entities.grep(Sketchup::Face).length
       inner_front = grp.entities.grep(Sketchup::Face).find { |f| f.normal.y < -0.999 }
       path = WallCutter.face_path(inner_front)
-      ok = CutEngine.cut(Geom::Point3d.new(300.0, 0, 54.0), Geom::YVECTOR,
-                         Geom::XVECTOR, Geom::ZVECTOR, 36.0, 48.0, 14.0, path: path)
+      ok = CutEngine.cut(Geom::Point3d.new(300.0, 0, 54.0), YVECTOR,
+                         XVECTOR, ZVECTOR, 36.0, 48.0, 14.0, path: path)
       check('group wall: path is [group]') { path.size == 1 && path[0] == grp }
       check('group wall: cut commits')     { ok }
       check('group wall: hole made')       { grp.entities.grep(Sketchup::Face).length > before }
@@ -82,7 +82,7 @@ module WallCutter
       check('drill: wall skin split')                     { ents.grep(Sketchup::Face).length > before }
       inst.erase! # plug blocks the verification ray while it sits in the hole
       check('drill: ray clears along axis') do
-        model.raytest(Geom::Point3d.new(540.0, -20.0, 78.0), Geom::YVECTOR).nil?
+        model.raytest(Geom::Point3d.new(540.0, -20.0, 78.0), YVECTOR).nil?
       end
       loose = ents.add_instance(defn, Geom::Transformation.new(Geom::Vector3d.new(1200.0, 0, 1200.0)))
       model.selection.add(loose)
@@ -98,9 +98,9 @@ module WallCutter
         f.normal.y < -0.999 && f.bounds.min.y.abs < 0.01 &&
           f.vertices.size == 4 && f.bounds.min.x > 708.0
       end
-      frame = FaceFrame.new(front, Geom::YVECTOR)
-      check('frame: v is up')      { (frame.v % Geom::ZVECTOR) > 0.999 }
-      check('frame: u is along X') { (frame.u % Geom::XVECTOR).abs > 0.999 }
+      frame = FaceFrame.new(front, YVECTOR)
+      check('frame: v is up')      { (frame.v % ZVECTOR) > 0.999 }
+      check('frame: u is along X') { (frame.u % XVECTOR).abs > 0.999 }
       check('frame: fits hole')    { frame.fits?(36.0, 48.0) }
       check('frame: rejects oversize') { !frame.fits?(132.0, 120.0) }
       o = frame.center_origin(36.0, 48.0, 48.0, nil) # sill 48 -> center z = 48 + 24
