@@ -1,54 +1,49 @@
-# SketchUp 2026 boolean-API probe. Run in a NEW model from Ruby Console:
-#   load '/Users/mengly/Documents/Qoder/wallcutter/dev/probe.rb'
+# Probe 3: does add_face split a coplanar face, and does pushpull cut through?
 puts '--- probe start ---'
-v = Geom::Vector3d.new(0, 0, 1)
-begin; puts "vector*float => #{(v * 2.0).to_a.inspect}"; rescue => e; puts "vector*float FAILS: #{e.class}"; end
-begin; puts "vector.scale => #{v.scale(2.0).to_a.inspect}"; rescue => e; puts "vector.scale FAILS: #{e.class}"; end
 model = Sketchup.active_model
-puts "entities.clip? #{model.entities.respond_to?(:clip)}"
-puts "SolidMunger? #{defined?(Geom::SolidMunger) ? 'yes' : 'no'}"
-if defined?(Geom::SolidMunger)
-  puts "munger methods: #{(Geom::SolidMunger.new.methods - Object.methods).sort.inspect}"
-  def pbox(ents, x, y, z, w, d, h)
-    g = ents.add_group
-    f = g.entities.add_face([x, y, z], [x + w, y, z], [x + w, y + d, z], [x, y + d, z])
-    f.pushpull(h)
-    g
-  end
-  model.start_operation('probe_groups', true)
+model.start_operation('probe3', true)
+begin
   ents = model.entities
-  a = pbox(ents, 0, 0, 0, 10, 10, 10)
-  b = pbox(ents, 5, 0, 0, 10, 10, 10)
-  m = Geom::SolidMunger.new
-  begin
-    m.add(a, Geom::Transformation.new)
-    m.add(b, Geom::Transformation.new)
-    r = m.operate(ents, :difference)
-    puts "groups operate(:difference) => #{r.inspect}"
-    puts "after operate: ents=#{ents.length} a.valid?=#{a.valid?} b.valid?=#{b.valid?}"
-    begin; puts "generate_geometry => #{m.generate_geometry(ents).inspect}"; rescue => e; puts "generate_geometry FAILS: #{e.class}: #{e.message}"; end
-    puts "final: ents=#{ents.length} faces=#{ents.grep(Sketchup::Face).length}"
-  rescue => e
-    puts "groups flow FAILS: #{e.class}: #{e.message}"
-  end
-  model.abort_operation
-  model.start_operation('probe_loose', true)
-  e2 = model.entities
-  f = e2.add_face([20, 0, 0], [30, 0, 0], [30, 0, 9], [20, 0, 9])
+  f = ents.add_face([0, 0, 0], [120, 0, 0], [120, 0, 108], [0, 0, 108])
   f.reverse! unless f.normal.y > 0
-  f.pushpull(1) # loose solid wall at root
-  cutter = pbox(e2, 24, -1, 3, 2, 3, 2)
-  faces_before = e2.grep(Sketchup::Face).length
-  m2 = Geom::SolidMunger.new
-  begin
-    m2.add(e2, Geom::Transformation.new)
-    m2.add(cutter, Geom::Transformation.new)
-    rr = m2.operate(e2, :difference)
-    puts "loose operate => #{rr.inspect}"
-    puts "loose: faces #{faces_before} -> #{e2.grep(Sketchup::Face).length}"
-  rescue => e
-    puts "loose flow FAILS: #{e.class}: #{e.message}"
+  f.pushpull(12)
+  faces0 = ents.grep(Sketchup::Face).length
+  rect = [[42, 0, 30], [78, 0, 30], [78, 0, 78], [42, 0, 78]].map { |a| Geom::Point3d.new(*a) }
+  rf = ents.add_face(rect)
+  puts "rect add_face => #{rf.class}; faces #{faces0} -> #{ents.grep(Sketchup::Face).length}"
+  target = Geom::Point3d.new(60, 0, 54)
+  inner = ents.grep(Sketchup::Face).find { |c| (c.center - target).length < 0.5 }
+  puts "inner face found=#{!inner.nil?} normal=#{inner&.normal&.to_a.inspect}"
+  inner.pushpull(-14.0) if inner
+  puts "after pushpull faces=#{ents.grep(Sketchup::Face).length}"
+  hole = model.raytest(Geom::Point3d.new(60, -20, 54), Geom::Vector3d.new(0, 1, 0))
+  puts "ray through hole clears: #{hole.nil?}"
+  # two-layer wall: second skin y=18..30
+  g = ents.add_face([0, 18, 0], [120, 18, 0], [120, 18, 108], [0, 18, 108])
+  g.reverse! unless g.normal.y > 0
+  g.pushpull(12)
+  entry2 = Geom::Point3d.new(60, 18, 54)
+  f2 = ents.grep(Sketchup::Face).find { |c| c.normal.y < -0.999 && (c.center - entry2).length < 0.5 }
+  puts "layer2 entry face found=#{!f2.nil?}"
+  if f2
+    r2 = [[42, 18, 30], [78, 18, 30], [78, 18, 78], [42, 18, 78]].map { |a| Geom::Point3d.new(*a) }
+    ents.add_face(r2)
+    inner2 = ents.grep(Sketchup::Face).find { |c| (c.center - entry2).length < 0.5 }
+    puts "layer2 inner found=#{!inner2.nil?}"
+    inner2.pushpull(-14.0) if inner2
+    hole2 = model.raytest(Geom::Point3d.new(60, -20, 54), Geom::Vector3d.new(0, 1, 0))
+    puts "ray through BOTH layers clears: #{hole2.nil?}"
   end
-  model.abort_operation
+  # misc API existence checks
+  puts "Sketchup::Boolean? #{defined?(Sketchup::Boolean).inspect}"
+  puts "Geom::PolygonMesh? #{defined?(Geom::PolygonMesh).inspect}"
+  puts "Entities#add_edges? #{ents.respond_to?(:add_edges)}"
+  puts "Entities#insert_points? #{ents.respond_to?(:insert_points)}"
+  puts "Face#split? #{f.respond_to?(:split)}"
+  puts "Face#flip_style? #{f.respond_to?(:flip_style)}"
+rescue => e
+  puts "FAILS: #{e.class}: #{e.message}"
+  puts e.backtrace.first(5)
 end
+model.abort_operation
 puts '--- probe end ---'

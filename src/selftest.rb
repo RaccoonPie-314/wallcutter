@@ -108,7 +108,13 @@ module WallCutter
     end
 
     def self.run
-      %i[run_engine run_group run_drill run_frame].each { |m| send(m) }
+      %i[run_engine run_group run_drill run_frame].each do |m|
+        begin
+          send(m)
+        rescue Exception => e
+          puts "FAIL #{m} crashed: #{e.class}: #{e.message} @ #{e.backtrace.first}"
+        end
+      end
       puts 'selftest done'
     end
   end

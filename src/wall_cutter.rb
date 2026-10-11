@@ -13,11 +13,17 @@ module WallCutter
   end
 
   # Root->leaf Group/ComponentInstance chain enclosing +entity+; [] when top-level.
-  # PathFromEntity may or may not include the leaf entity itself, so filter.
+  # (Sketchup::PathFromEntity does not exist in 2026 — walk definition.instances upward.)
   def self.face_path(entity)
-    return [] if entity.parent.is_a?(Sketchup::Model)
-    chain = Sketchup::PathFromEntity.new.find(entity) || []
-    chain.select { |e| e.is_a?(Sketchup::ComponentInstance) || e.is_a?(Sketchup::Group) }
+    chain = []
+    defn = entity.parent
+    while defn.is_a?(Sketchup::ComponentDefinition)
+      inst = defn.instances.first
+      break unless inst
+      chain.unshift(inst)
+      defn = inst.parent
+    end
+    chain
   end
 
   def self.drillable?(sel)
