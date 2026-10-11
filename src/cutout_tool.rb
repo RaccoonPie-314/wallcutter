@@ -92,11 +92,13 @@ module WallCutter
     end
 
     def activate
+      puts '[WallCutter] tool activate'
       Sketchup.status_text = 'WallCutter: click a wall face, adjust in panel, Enter to cut'
       show_dialog
     end
 
     def deactivate(view)
+      puts '[WallCutter] tool deactivate'
       @dlg.close if @dlg && @dlg.visible?
       Sketchup.status_text = ''
       view.invalidate
@@ -113,8 +115,11 @@ module WallCutter
       # best_picked stops at a Group/Component wrapper, so walk the pick path to the
       # leaf face; walls inside groups must be pickable per the spec.
       @frame = nil
-      @face = (ph.path_at(0) || []).grep(Sketchup::Face).last
-      @face ||= ph.best_picked if !@face && ph.best_picked.is_a?(Sketchup::Face)
+      path = (ph.path_at(0) || [])
+      @face = path.grep(Sketchup::Face).last
+      best = ph.best_picked
+      @face ||= best if best.is_a?(Sketchup::Face)
+      puts "[WallCutter] click #{x},#{y} best=#{best.class} path=#{path.map { |e| e.class }.inspect} face=#{@face.class}"
       view.invalidate
     end
 
