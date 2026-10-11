@@ -89,8 +89,11 @@ module WallCutter
       rect = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map do |su, sv|
         corner(center, ut, su * w / 2.0, vt, sv * h / 2.0)
       end
+      if defined?(WallCutter::SelfTest)
+        puts "[WC] layer t=#{t.round(2)} center=[#{center.x.round(1)},#{center.y.round(1)},#{center.z.round(1)}] rect=#{rect.map { |pt| "[#{pt.x.round(1)},#{pt.y.round(1)},#{pt.z.round(1)}]" }.join(' ')}"
+      end
       rf = ents.add_face(rect)
-      puts "[WC] layer t=#{t.round(2)} add_face=#{rf.class}" if defined?(WallCutter::SelfTest)
+      puts "[WC] layer add_face=#{rf.class}" if defined?(WallCutter::SelfTest)
       return false unless rf
       # The split only really happened if the new face shares an edge with the target;
       # otherwise add_face dropped a floating rect (rect outside that face) -> erase it.
@@ -103,7 +106,12 @@ module WallCutter
       end
       dist = thickness + PRIDE_IN
       dist = -dist if inner.normal % un < 0 # pushpull travels along the face normal
+      if defined?(WallCutter::SelfTest)
+        ib = inner.bounds
+        puts "[WC] inner bounds=[#{ib.min.to_a.map { |x| x.round(1) }.inspect}..#{ib.max.to_a.map { |x| x.round(1) }.inspect}] n=#{inner.normal.to_a.map { |x| x.round(1) }.inspect} dist=#{dist.round(2)}"
+      end
       inner.pushpull(dist)
+      puts "[WC] after pushpull faces=#{ents.grep(Sketchup::Face).length}" if defined?(WallCutter::SelfTest)
       # API pushpull EXTRUDES: the moved face caps the hole at exit+PRIDE, and the far
       # skin may stay whole or keep a plug. Clear every rect-sized face capping the hole
       # column at/around the exit plane; if the far skin is still whole, split it with
