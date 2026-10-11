@@ -86,7 +86,9 @@ module WallCutter
       model.selection.clear
       check('drill: sandwich axis found + cut committed') { ok }
       check('drill: wall skin split')                     { ents.grep(Sketchup::Face).length > before }
-      inst.erase! # plug blocks the verification ray while it sits in the hole
+      check('drill: component restored') { !defn.instances.first.nil? }
+      restored = defn.instances.first
+      restored.erase! if restored # plug blocks the verification ray while it sits in the hole
       check('drill: ray clears along axis') do
         hit = WallCutter.ray(model, Geom::Point3d.new(540.0, -20.0, 78.0), Y_AXIS)
         if hit

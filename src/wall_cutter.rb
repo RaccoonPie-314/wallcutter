@@ -137,7 +137,14 @@ module WallCutter
     end
     width  = ext.call(u) + 2 * PLANE_PAD
     height = ext.call(v) + 2 * PLANE_PAD
+    # The component's own faces collide with the hole walls (the pad makes the hole
+    # larger than the component), and pushpull stops at them. Lift it out, cut,
+    # put it back into the finished opening.
+    defn = inst.definition
+    tr   = inst.transformation
+    inst.erase!
     ok = CutEngine.cut(origin, n, u, v, width, height, span + 2.0)
+    model.entities.add_instance(defn, tr) unless model.active_path
     fail_with('Cut removed nothing — is the wall closed geometry?', quiet) unless ok
     ok
   rescue StandardError => e
