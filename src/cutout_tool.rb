@@ -152,7 +152,7 @@ module WallCutter
     def auto_depth(origin, n)
       probe = Geom::Point3d.new(origin.x + n.x * 0.01, origin.y + n.y * 0.01,
                                 origin.z + n.z * 0.01)
-      hit = Sketchup.active_model.raytest(probe, n)
+      hit = WallCutter.ray(Sketchup.active_model, probe, n)
       hit ? (hit[0] - origin).length + 1.0 : 24.0
     end
 

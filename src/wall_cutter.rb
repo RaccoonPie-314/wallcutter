@@ -37,30 +37,69 @@ module WallCutter
   def self.world_bounds(inst)
     t  = inst.transformation
     bb = Geom::BoundingBox.new
-    8.times { |i| bb.add(inst.bounds.corner(i).transform(t)) }
+    bb_corners(inst.bounds).each { |pt| bb.add(pt.transform(t)) }
     bb
+  end
+
+  # BoundingBox#corner is gone in 2026; eight min/max combinations replace it.
+  def self.bb_corners(bb)
+    xs = [bb.min.x, bb.max.x]
+    ys = [bb.min.y, bb.max.y]
+    zs = [bb.min.z, bb.max.z]
+    xs.flat_map { |x| ys.flat_map { |y| zs.map { |z| Geom::Point3d.new(x, y, z) } } }
   end
 
   # Local X/Y/Z of the instance in world; the drill axis is the one whose BOTH raytest
   # hits straddle the bbox center within (half-extent along that axis + SANDWICH_TOL),
   # i.e. the component is sandwiched by geometry on both sides — that pair is the wall.
-  def self.detect_axis(inst)
-    model  = Sketchup.active_model
-    bb     = world_bounds(inst)
-    center = bb.center
-    t      = inst.transformation
+  # raytest normalizer: a miss may return nil OR an empty Array depending on build;
+  # callers must never trust a bare truthiness check.
+  def self.ray(model, point, vector)
+    r = model.raytest(point, vector)
+    (r.nil? || !r.is_a?(Array) || r.empty?) ? nil : r
+  end
+
+  # Sandwich detection WITHOUT raycasting (raytest from inside solids is unreliable):
+  # for each instance axis, look for root faces perpendicular to it, overlapping the
+  # component footprint, on both sides within tolerance. That pair is the wall.
+  # ponytail: scans root entities only; walls nested in groups are drilled via Smart
+  # Cutout's explicit face pick instead.
+  def self.detect_axis(inst, diag = false)
+    bb      = world_bounds(inst)
+    center  = bb.center
+    corners = bb_corners(bb)
+    t       = inst.transformation
+    faces   = Sketchup.active_model.entities.grep(Sketchup::Face)
     [X_AXIS, Y_AXIS, Z_AXIS].each do |a|
-      ax = a.transform(t).normalize
-      half = (0..7).map { |i| ((bb.corner(i) - center) % ax).abs }.max
-      f = model.raytest(center, ax.reverse)
-      b = model.raytest(center, ax)
-      next unless f && b
-      limit = half + SANDWICH_TOL
-      if (f[0] - center).length <= limit && (b[0] - center).length <= limit
-        return [(b[0] - f[0]).normalize, f, b]
+      ax   = a.transform(t).normalize
+      half = corners.map { |pt| ((pt - center) % ax).abs }.max
+      front = nil
+      back  = nil
+      faces.each do |f|
+        next if f.normal.cross(ax).length > 0.001
+        fb = f.bounds
+        next unless aabb_overlap?(bb, fb)
+        off = (fb.center - center) % ax
+        next unless off.abs <= half + SANDWICH_TOL
+        if off < 0
+          front = off if front.nil? || off > front
+        else
+          back = off if back.nil? || off < back
+        end
       end
+      puts("  axis #{ax.to_a.map { |x| x.round(2) }.inspect}: front=#{front.inspect} back=#{back.inspect} half=#{half.round(1)} faces=#{faces.size}") if diag
+      next if front.nil? || back.nil?
+      origin = Geom::Point3d.new(center.x + ax.x * front, center.y + ax.y * front,
+                                 center.z + ax.z * front)
+      return [ax, origin, back - front]
     end
     nil
+  end
+
+  def self.aabb_overlap?(a, b)
+    a.min.x <= b.max.x && b.min.x <= a.max.x &&
+      a.min.y <= b.max.y && b.min.y <= a.max.y &&
+      a.min.z <= b.max.z && b.min.z <= a.max.z
   end
 
   # Two world side-axes perpendicular to the drill axis, from the instance's local axes.
@@ -85,20 +124,17 @@ module WallCutter
       fail_with('No wall sandwich found along the component axes — nudge the component into the wall.', quiet)
       return false
     end
-    n, front, back = res
+    n, origin, span = res
     bb = world_bounds(inst)
     u, v = side_axes(inst, n)
+    corners = bb_corners(bb)
     ext = lambda do |axis|
-      cs = (0..7).map { |i| bb.corner(i) % axis }
+      cs = corners.map { |pt| pt % axis }
       cs.max - cs.min
     end
     width  = ext.call(u) + 2 * PLANE_PAD
     height = ext.call(v) + 2 * PLANE_PAD
-    depth  = (back[0] - front[0]).length + CutEngine::PRIDE_IN
-    ok = CutEngine.cut(front[0], n, u, v, width, height, depth, path: face_path(front[2]))
-    # ponytail: raytest sees the topmost surface, so a component buried inside a
-    # container drills "the sandwich that is actually there", not a conceptual wall.
-    # Escape hatch for a wrong sandwich: Smart Cutout's explicit face pick.
+    ok = CutEngine.cut(origin, n, u, v, width, height, span + 2.0)
     fail_with('Cut removed nothing — is the wall closed geometry?', quiet) unless ok
     ok
   rescue StandardError => e

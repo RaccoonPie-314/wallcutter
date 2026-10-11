@@ -36,7 +36,9 @@ module WallCutter
       check('engine cut commits')           { ok }
       check('front skin split (hole made)') { ents.grep(Sketchup::Face).length > faces_before }
       check('ray through opening clears') do
-        model.raytest(Geom::Point3d.new(60.0, -20.0, 54.0), Y_AXIS).nil?
+        hit = WallCutter.ray(model, Geom::Point3d.new(60.0, -20.0, 54.0), Y_AXIS)
+        puts("  diag: raw=#{model.raytest(Geom::Point3d.new(60.0, -20.0, 54.0), Y_AXIS).inspect[0, 120]} hit_at=#{hit ? hit[0].to_a.map { |x| x.round(1) }.inspect : 'nil'} on=#{hit ? hit[2].class : '-'}") if hit
+        hit.nil?
       end
       check('no-op cut returns false') do
         !CutEngine.cut(Geom::Point3d.new(60.0, -360.0, 54.0), Y_AXIS,
@@ -76,13 +78,17 @@ module WallCutter
       inst = ents.add_instance(defn, Geom::Transformation.new(Geom::Vector3d.new(540.0, 6.0, 54.0)))
       model.selection.add(inst)
       before = ents.grep(Sketchup::Face).length
+      axis_diag = WallCutter.detect_axis(inst, true)
+      puts("  diag: axis=#{axis_diag.nil? ? 'nil' : axis_diag[0].to_a.map { |x| x.round(2) }.inspect} span=#{axis_diag&.last&.round(1)}")
       ok = WallCutter.drill_selected(quiet: true)
       model.selection.clear
       check('drill: sandwich axis found + cut committed') { ok }
       check('drill: wall skin split')                     { ents.grep(Sketchup::Face).length > before }
       inst.erase! # plug blocks the verification ray while it sits in the hole
       check('drill: ray clears along axis') do
-        model.raytest(Geom::Point3d.new(540.0, -20.0, 78.0), Y_AXIS).nil?
+        hit = WallCutter.ray(model, Geom::Point3d.new(540.0, -20.0, 78.0), Y_AXIS)
+        puts("  diag: drill ray hit=#{hit ? hit[0].to_a.map { |x| x.round(1) }.inspect : 'nil'}") if hit
+        hit.nil?
       end
       loose = ents.add_instance(defn, Geom::Transformation.new(Geom::Vector3d.new(1200.0, 0, 1200.0)))
       model.selection.add(loose)

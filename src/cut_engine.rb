@@ -95,6 +95,12 @@ module WallCutter
       dist = thickness + PRIDE_IN
       dist = -dist if inner.normal % un < 0 # pushpull travels along the face normal
       inner.pushpull(dist)
+      # API pushpull leaves the exit-plane plug that interactive pushpull would delete.
+      exit_center = Geom::Point3d.new(center.x + un.x * thickness,
+                                      center.y + un.y * thickness,
+                                      center.z + un.z * thickness)
+      plug = rect_face_at(ents, exit_center, area)
+      plug.erase! if plug && plug.valid?
       true
     end
 
