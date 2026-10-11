@@ -90,12 +90,12 @@ module WallCutter
       restored = defn.instances.first
       restored.erase! if restored # plug blocks the verification ray while it sits in the hole
       check('drill: ray clears along axis') do
-        hit = WallCutter.ray(model, Geom::Point3d.new(540.0, -20.0, 78.0), Y_AXIS)
+        hit = WallCutter.ray(model, Geom::Point3d.new(540.0, -20.0, 30.0), Y_AXIS)
         if hit
           puts "  diag: drill ray hit=#{hit[0].to_a.map { |x| x.round(1) }.inspect} ents=#{hit[1].inspect[0, 200]}"
           ents.grep(Sketchup::Face).each do |f|
             c = f.bounds.center
-            next unless (c.x - 540).abs < 60 && (c.z - 78).abs < 60 && c.y > -30 && c.y < 25
+            next unless (c.x - 540).abs < 60 && (c.z - 30).abs < 60 && c.y > -30 && c.y < 25
             puts "  face c=[#{c.x.round(1)},#{c.y.round(1)},#{c.z.round(1)}] area=#{f.area.round(0)} n=#{f.normal.to_a.map { |x| x.round(1) }.inspect} loop=#{f.outer_loop.vertices.size}"
           end
         end
