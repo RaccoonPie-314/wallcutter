@@ -1,6 +1,6 @@
 # WallCutter SketchUp Plugin Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Note:** implemented 2026-10-11; tasks below match the committed code.
 
 **Goal:** A personal SketchUp tool that cuts rectangular window/door/opening holes through walls — via a dialog-driven cutout tool (Feature 1) or by auto-detecting the wall around a placed component and drilling it (Feature 2).
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** SketchUp Ruby API only (no gems). `Entities#clip`, `model.raytest`, `PickHelper`, `PathFromEntity`, `UI::HtmlDialog`, stdlib `json`.
 
-**Spec:** `docs/superpowers/specs/2026-10-11-wallcutter-design.md` — read it before starting; this plan implements it.
+**Spec:** `docs/wallcutter-design.md` — read it before starting; this plan implements it.
 
 ## Global Constraints
 
@@ -31,7 +31,7 @@ wall_cutter/
 │   ├── cutout_tool.rb    # CutoutTool (pick/preview/commit) + FaceFrame + HtmlDialog (inline HTML)
 │   └── selftest.rb       # assert-based in-SketchUp checks, grown by one section per task
 ├── package.sh            # assembles build/ tree and wall_cutter.rbz; install_dev rsync to Plugins
-└── docs/superpowers/...  # spec (already committed)
+└── docs/  # spec + plan
 ```
 
 Repo root is the current workspace (already a git repo with the spec at `main`).
