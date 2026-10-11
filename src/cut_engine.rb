@@ -95,23 +95,41 @@ module WallCutter
       dist = thickness + PRIDE_IN
       dist = -dist if inner.normal % un < 0 # pushpull travels along the face normal
       inner.pushpull(dist)
-      # API pushpull clamps at the far skin instead of punching through, so open the
-      # exit plane explicitly: erase the plug if pushpull left one, otherwise split the
-      # exit face with the same rect and erase its inner piece.
+      # API pushpull EXTRUDES: the moved face caps the hole at exit+PRIDE, and the far
+      # skin may stay whole or keep a plug. Clear every rect-sized face capping the hole
+      # column at/around the exit plane; if the far skin is still whole, split it with
+      # the same rect first, then clear again.
       exit_center = Geom::Point3d.new(center.x + un.x * thickness,
                                       center.y + un.y * thickness,
                                       center.z + un.z * thickness)
-      plug = rect_face_at(ents, exit_center, area)
-      unless plug
+      unless clear_hole_caps(ents, exit_center, un, area)
         rect2 = rect.map { |pt| Geom::Point3d.new(pt.x + un.x * thickness,
                                                   pt.y + un.y * thickness,
                                                   pt.z + un.z * thickness) }
-        rf2 = ents.add_face(rect2)
-        plug = rect_face_at(ents, exit_center, area)
-        rf2.erase! if rf2 && rf2.valid? && rf2 != plug && plug.nil?
+        ents.add_face(rect2)
+        clear_hole_caps(ents, exit_center, un, area)
       end
-      plug.erase! if plug && plug.valid?
       true
+    end
+
+    # Erase any face blocking the hole at or just past the exit plane (pushpull's moved
+    # face, an exit plug, or both). Center must sit on the hole axis within 0.5".
+    def self.clear_hole_caps(ents, exit_center, un, area)
+      cleared = false
+      ents.grep(Sketchup::Face).each do |f|
+        next unless f.valid?
+        next if (f.area - area).abs > area * 0.05 + 0.5
+        c = f.bounds.center
+        off = (c - exit_center) % un
+        next unless off.abs <= PRIDE_IN + 0.5
+        proj = Geom::Point3d.new(exit_center.x + un.x * off,
+                                 exit_center.y + un.y * off,
+                                 exit_center.z + un.z * off)
+        next unless (c - proj).length < 0.5
+        f.erase!
+        cleared = true
+      end
+      cleared
     end
 
     # Face centered on +center+ with area ~ +area+. Tolerance-based identity check:

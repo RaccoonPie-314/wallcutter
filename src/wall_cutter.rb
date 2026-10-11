@@ -140,6 +140,7 @@ module WallCutter
     fail_with('Cut removed nothing — is the wall closed geometry?', quiet) unless ok
     ok
   rescue StandardError => e
+    puts("  drill error: #{e.class}: #{e.message} @ #{e.backtrace.first}") if quiet
     fail_with("WallCutter drill error: #{e.message}", quiet)
     false
   end
