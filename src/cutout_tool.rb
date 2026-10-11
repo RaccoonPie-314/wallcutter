@@ -110,9 +110,11 @@ module WallCutter
     def onLButtonDown(_flags, x, y, view)
       ph = view.pick_helper
       ph.do_pick(x, y)
-      best = ph.best_picked
-      @face = best if best.is_a?(Sketchup::Face)
+      # best_picked stops at a Group/Component wrapper, so walk the pick path to the
+      # leaf face; walls inside groups must be pickable per the spec.
       @frame = nil
+      @face = (ph.path_at(0) || []).grep(Sketchup::Face).last
+      @face ||= ph.best_picked if !@face && ph.best_picked.is_a?(Sketchup::Face)
       view.invalidate
     end
 
