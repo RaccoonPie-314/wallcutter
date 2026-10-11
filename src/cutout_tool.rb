@@ -169,6 +169,13 @@ module WallCutter
       view.drawing_color = color
       view.draw(GL_LINE_LOOP, pts)
       view.draw_points(pts, 6, 2, color)
+    rescue StandardError => e
+      unless @draw_err_shown # report the full error once, then stay quiet per frame
+        @draw_err_shown = true
+        puts "[WallCutter] draw error: #{e.class}: #{e.message}"
+        puts(e.backtrace.first(4).map { |l| "  #{l}" })
+        report("draw error (see Ruby Console): #{e.class}: #{e.message}")
+      end
     end
 
     # ponytail: rebuilt per draw frame; outer loops are tiny, cache if walls get
