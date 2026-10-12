@@ -21,13 +21,16 @@ module WallCutter
   # upgrade path is triangulated per-face clipping.
   module CutEngine
     PRIDE_IN = 1.0 # overshoot past the exit face so the hole comes out clean
+    # Auto-depth stops at air gaps wider than this: a wall cavity is under a foot,
+    # a room behind the wall is not — the far wall must not get the same window.
+    CAVITY_MAX = 12.0
 
 
     # origin/n/u/v in world coords; path = Group/ComponentInstance chain from root to the
     # container owning the face ([] for top level). Returns false if nothing could be cut.
-    # depth = nil means AUTO: extend through the farthest parallel face that holds
-    # the opening — "through whatever's behind", no raytest needed (raytest from
-    # inside solids is unreliable in this build).
+    # depth = nil means AUTO: cut through the clicked wall's layers, stopping at the
+    # first air gap wider than CAVITY_MAX (a room behind the wall ends the cut).
+    # No raytest — raytest from inside solids is unreliable in this build.
     def self.cut(origin, n, u, v, width, height, depth = nil, path: [])
       model = Sketchup.active_model
       ents  = path.empty? ? model.entities : path.last.entities
@@ -53,7 +56,7 @@ module WallCutter
         dl = if depth
                depth * nl.length
              elsif planes.any?
-               planes.last[0] + PRIDE_IN + 1.0
+               auto_depth_limit(planes) + PRIDE_IN + 1.0
              else
                24.0
              end
@@ -82,6 +85,29 @@ module WallCutter
         model.abort_operation
         raise
       end
+    end
+
+    # Auto depth must cut the wall the user clicked, not every parallel wall in the
+    # model (a shed's far wall used to receive the same window). Walk the entry/exit
+    # pairs front to back exactly like the cut loop and stop before an air gap wider
+    # than a wall cavity. planes is non-empty (guarded by the caller).
+    def self.auto_depth_limit(planes)
+      dl = planes.first[0]
+      prev_exit = nil
+      i = 0
+      while i + 1 < planes.size
+        t_in  = planes[i][0]
+        t_out = planes[i + 1][0]
+        if t_out - t_in < 0.001
+          i += 1 # duplicate coplanar faces: same skip rule as the cut loop
+          next
+        end
+        break if prev_exit && t_in - prev_exit > CAVITY_MAX
+        dl = t_out
+        prev_exit = t_out
+        i += 2
+      end
+      dl
     end
 
     def self.world_to_local(path)

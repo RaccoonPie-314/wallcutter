@@ -77,8 +77,9 @@ module WallCutter
       check('auto depth clears 48in wall') do
         auto_ok && model.raytest(Geom::Point3d.new(190.0, -20.0, 54.0), Y_AXIS).nil?
       end
-      # ...and a layered wall with a cavity (skins y=0..12 and y=30..42 at x=260..380)
-      lay = ents.add_face([260, 30, 0], [380, 30, 0], [380, 30, 108], [260, 30, 108])
+      # ...and a layered wall with a cavity (skins y=0..12 and y=20..32 at x=260..380;
+      # 8in cavity - real cavities are under a foot, see CutEngine::CAVITY_MAX)
+      lay = ents.add_face([260, 20, 0], [380, 20, 0], [380, 20, 108], [260, 20, 108])
       lay.reverse! unless lay.normal.y > 0
       lay.pushpull(12)
       lay_ok = CutEngine.cut(Geom::Point3d.new(320.0, 0, 54.0), Y_AXIS,
@@ -95,6 +96,25 @@ module WallCutter
       check('deep block: no collar at front plane') do
         deep_blockers.each { |f| puts "  blocker a=#{f.area.round(1)} c=[#{f.bounds.center.to_a.map { |x| x.round(1) }.join(',')}]" }
         deep_blockers.empty?
+      end
+      # shed repro: front wall + a parallel back wall 8ft behind - auto depth must
+      # stop at the room air, not window the far wall too (user: "cut every corner")
+      box_wall(ents, 1100.0, 120.0, 108.0, 12.0) # front wall y=0..12
+      far = ents.add_face([1100, 96, 0], [1220, 96, 0], [1220, 96, 108], [1100, 96, 108])
+      far.reverse! unless far.normal.y > 0
+      far.pushpull(12) # back wall y=96..108
+      shed_ok = CutEngine.cut(Geom::Point3d.new(1160.0, 0, 54.0), Y_AXIS,
+                              X_AXIS, Z_AXIS, 36.0, 48.0)
+      check('shed: front wall cut commits') { shed_ok }
+      check('shed: front opening clears to the back wall') do
+        hit = WallCutter.ray(model, Geom::Point3d.new(1160.0, -20.0, 54.0), Y_AXIS)
+        puts("  diag: shed ray hit=#{hit ? hit[0].to_a.map { |x| x.round(1) }.inspect : 'nil'}") if hit.nil? || (hit[0].y - 96.0).abs > 0.5
+        !hit.nil? && (hit[0].y - 96.0).abs < 0.5
+      end
+      check('shed: far wall untouched') do
+        hit = WallCutter.ray(model, Geom::Point3d.new(1160.0, 200.0, 54.0), Y_AXIS.reverse)
+        puts("  diag: far-wall ray hit=#{hit ? hit[0].to_a.map { |x| x.round(1) }.inspect : 'nil'}") if hit.nil? || (hit[0].y - 108.0).abs > 0.5
+        !hit.nil? && (hit[0].y - 108.0).abs < 0.5
       end
       check('no-op cut returns false') do
         !CutEngine.cut(Geom::Point3d.new(60.0, -360.0, 54.0), Y_AXIS,
