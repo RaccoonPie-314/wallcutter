@@ -83,14 +83,19 @@ module WallCutter
 
     # --- drag math (pure): mouse at (mu, mv) from the face's min corner ----------
     MIN_SIZE = 1.0
+    # move (center dot) is checked LAST so edge handles win overlapping grabs
     HANDLES = { nw: [-1, 1], n: [0, 1], ne: [1, 1], e: [1, 0],
-                se: [1, -1], s: [0, -1], sw: [-1, -1], w: [-1, 0] }.freeze
+                se: [1, -1], s: [0, -1], sw: [-1, -1], w: [-1, 0],
+                move: [0, 0] }.freeze
 
     def self.clamp(v, lo, hi)
       [[v, lo].max, hi].min
     end
 
     def self.drag_resize(handle, mu, mv, left, sill, w, h, avail_w, avail_h)
+      if handle == :move
+        return [clamp(mu, 0.0, avail_w - w), clamp(mv, 0.0, avail_h - h), w, h]
+      end
       r = left + w
       t = sill + h
       left = mu if %i[w nw sw].include?(handle)
@@ -129,10 +134,18 @@ module WallCutter
       </script></body></html>
     HTML
 
+    CURSOR = File.join(ICON_DIR, 'cursor.png')
+
     def self.activate
       model = Sketchup.active_model
       return unless WallCutter.top_level_ok?
       model.select_tool(new)
+    end
+
+    def onSetCursor(view, _flags, _x, _y)
+      view.set_cursor(CURSOR)
+    rescue StandardError
+      @cursor_failed ||= (puts 'WallCutter: custom cursor unavailable' ; true)
     end
 
     def initialize
@@ -160,12 +173,28 @@ module WallCutter
       view.invalidate
     end
 
+    # Mouse pixel -> [u, v] in face coords measured from the face's min corner.
+    def plane_uv(view, x, y)
+      ray = view.pickray(x, y)
+      return nil unless ray
+      frame = current_frame(view)
+      hit = Geom.intersect_line_plane(ray, [frame.ref, frame.n])
+      return nil unless hit
+      pu, pv = frame.plane_coords(hit)
+      [pu - frame.min_u, pv - frame.min_v]
+    end
+
     def onLButtonDown(_flags, x, y, view)
       # best_picked stops at a Group/Component wrapper, so walk the pick path to the
       # leaf face; walls inside groups must be pickable per the spec.
       @frame = nil
+      @drag_off = nil
       if @face&.valid? && (@drag = hit_handle(view, x, y))
         materialize_offsets(current_frame(view))
+        if @drag == :move
+          uv = plane_uv(view, x, y)
+          @drag_off = uv && [uv[0] - @params[:left].to_f, uv[1] - @params[:sill].to_f]
+        end
         return
       end
       ph = view.pick_helper
@@ -179,19 +208,25 @@ module WallCutter
 
     def onMouseMove(_flags, x, y, view)
       return unless @drag && @face&.valid?
-      ray = view.pickray(x, y)
-      return unless ray
+      mu, mv = plane_uv(view, x, y)
+      return unless mu
+      if @drag == :move && @drag_off
+        mu -= @drag_off[0]
+        mv -= @drag_off[1]
+      end
       frame = current_frame(view)
-      hit = Geom.intersect_line_plane(ray, [frame.ref, frame.n])
-      return unless hit
-      pu, pv = frame.plane_coords(hit)
       w, h = @params[:width].to_f, @params[:height].to_f
       @params[:left], @params[:sill], @params[:width], @params[:height] =
-        self.class.drag_resize(@drag, pu - frame.min_u, pv - frame.min_v,
+        self.class.drag_resize(@drag, mu, mv,
                                @params[:left].to_f, @params[:sill].to_f, w, h,
                                frame.avail_w, frame.avail_h)
-      Sketchup.status_text = format('WallCutter: %0.1f x %0.1f (in) — Enter to cut',
-                                    @params[:width], @params[:height])
+      Sketchup.status_text =
+        if @drag == :move
+          format('WallCutter: at left %0.1f", sill %0.1f" — Enter to cut',
+                 @params[:left], @params[:sill])
+        else
+          format('WallCutter: %0.1f x %0.1f (in) — Enter to cut', w, h)
+        end
       view.invalidate
     end
 

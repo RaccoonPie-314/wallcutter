@@ -141,6 +141,10 @@ module WallCutter
       check('drag clamps to face') { w == 90 && h == 95 }
       l, s2, w, h = ct.drag_resize(:s, 20, -999, 10, 5, 30, 20, 100, 100)
       check('drag min size') { h >= ct::MIN_SIZE && s2 == 0 }
+      l, s2, w, h = ct.drag_resize(:move, 50, 40, 10, 5, 30, 20, 100, 100)
+      check('move repositions, size kept') { l == 50 && s2 == 40 && w == 30 && h == 20 }
+      l, s2, w, h = ct.drag_resize(:move, 999, 999, 10, 5, 30, 20, 100, 100)
+      check('move clamps inside face') { l == 70 && s2 == 80 && w == 30 && h == 20 }
     end
 
     def self.run
