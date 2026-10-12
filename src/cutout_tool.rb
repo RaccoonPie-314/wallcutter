@@ -250,22 +250,12 @@ module WallCutter
                              frame.avail_w, frame.avail_h))
       end
       origin = frame.center_origin(w, h, @params[:sill], @params[:left])
-      depth  = @params[:depth] || auto_depth(origin, frame.n)
-      ok = CutEngine.cut(origin, frame.n, frame.u, frame.v, w, h, depth,
+      ok = CutEngine.cut(origin, frame.n, frame.u, frame.v, w, h, @params[:depth],
                          path: WallCutter.face_path(@face))
       report(ok ? 'cut done — click next face or Esc' : 'cut removed nothing — set depth manually')
       view.invalidate
     rescue StandardError => e
       report("error: #{e.message}")
-    end
-
-    # Ray from just inside the face along the into-wall direction: first hit behind
-    # the front skin is the back side of the deepest layer -> "through wall" for free.
-    def auto_depth(origin, n)
-      probe = Geom::Point3d.new(origin.x + n.x * 0.01, origin.y + n.y * 0.01,
-                                origin.z + n.z * 0.01)
-      hit = WallCutter.ray(Sketchup.active_model, probe, n)
-      hit ? (hit[0] - origin).length + 1.0 : 24.0
     end
 
     def draw(view)

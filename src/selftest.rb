@@ -42,6 +42,22 @@ module WallCutter
         puts("  diag: raw=#{model.raytest(Geom::Point3d.new(60.0, -20.0, 54.0), Y_AXIS).inspect[0, 120]} hit_at=#{hit ? hit[0].to_a.map { |x| x.round(1) }.inspect : 'nil'} on=#{hit ? hit[2].class : '-'}") if hit
         hit.nil?
       end
+      # AUTO depth (nil) must clear a wall thicker than the old 24in fallback...
+      box_wall(ents, 130.0, 120.0, 108.0, 48.0) # 48in-thick wall at x=130..250
+      auto_ok = CutEngine.cut(Geom::Point3d.new(190.0, 0, 54.0), Y_AXIS,
+                              X_AXIS, Z_AXIS, 36.0, 48.0)
+      check('auto depth clears 48in wall') do
+        auto_ok && model.raytest(Geom::Point3d.new(190.0, -20.0, 54.0), Y_AXIS).nil?
+      end
+      # ...and a layered wall with a cavity (skins y=0..12 and y=30..42 at x=260..380)
+      lay = ents.add_face([260, 30, 0], [380, 30, 0], [380, 30, 108], [260, 30, 108])
+      lay.reverse! unless lay.normal.y > 0
+      lay.pushpull(12)
+      lay_ok = CutEngine.cut(Geom::Point3d.new(320.0, 0, 54.0), Y_AXIS,
+                             X_AXIS, Z_AXIS, 36.0, 48.0)
+      check('auto depth clears layered wall + cavity') do
+        lay_ok && model.raytest(Geom::Point3d.new(320.0, -20.0, 54.0), Y_AXIS).nil?
+      end
       check('no-op cut returns false') do
         !CutEngine.cut(Geom::Point3d.new(60.0, -360.0, 54.0), Y_AXIS,
                        X_AXIS, Z_AXIS, 36.0, 48.0, 1.0)

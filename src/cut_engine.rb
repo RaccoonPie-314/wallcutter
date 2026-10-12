@@ -25,7 +25,10 @@ module WallCutter
 
     # origin/n/u/v in world coords; path = Group/ComponentInstance chain from root to the
     # container owning the face ([] for top level). Returns false if nothing could be cut.
-    def self.cut(origin, n, u, v, width, height, depth, path: [])
+    # depth = nil means AUTO: extend through the farthest parallel face that holds
+    # the opening — "through whatever's behind", no raytest needed (raytest from
+    # inside solids is unreliable in this build).
+    def self.cut(origin, n, u, v, width, height, depth = nil, path: [])
       model = Sketchup.active_model
       ents  = path.empty? ? model.entities : path.last.entities
       inv   = world_to_local(path).inverse
@@ -38,7 +41,6 @@ module WallCutter
       vt = Geom::Vector3d.new(vl.to_a).normalize
       wl = width * ul.length
       hl = height * vl.length
-      dl = depth * nl.length
       model.start_operation('WallCutter cut', true)
       begin
         # Faces parallel to the cutter, sorted along the into-wall axis; consecutive
@@ -46,8 +48,16 @@ module WallCutter
         planes = ents.grep(Sketchup::Face).select { |f|
           f.normal.cross(un).length < 0.001
         }.map { |f| [plane_t(f, o, un), f] }
-          .select { |t, f| t >= -0.001 && t <= dl + 0.001 && bounds_hold?(f.bounds, o, un, ut, vt, t, wl, hl) }
+          .select { |t, f| t >= -0.001 && t <= 12_000.0 && bounds_hold?(f.bounds, o, un, ut, vt, t, wl, hl) }
           .sort_by(&:first)
+        dl = if depth
+               depth * nl.length
+             elsif planes.any?
+               planes.last[0] + PRIDE_IN + 1.0
+             else
+               24.0
+             end
+        planes.select! { |t, _f| t <= dl + 0.001 }
         cut_any = false
         i = 0
         while i + 1 < planes.size
