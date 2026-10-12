@@ -134,41 +134,13 @@ module WallCutter
       </script></body></html>
     HTML
 
-    CURSOR = File.join(ICON_DIR, 'cursor.png')
-
     def self.activate
       model = Sketchup.active_model
       return unless WallCutter.top_level_ok?
       model.select_tool(new)
     end
 
-    PROBE = '/Users/mengly/Documents/Qoder/wallcutter/dev/cursor_probe.txt'
 
-    def onSetCursor(view, _flags, _x, _y)
-      unless @cursor_probed
-        @cursor_probed = true
-        File.write(PROBE, "onSetCursor fired #{Time.now} try set_cursor...\n") rescue nil
-      end
-      try_custom_cursor(view)
-    end
-
-    def try_custom_cursor(view)
-      return if @cursor_done
-      @cursor_done = true
-      view.set_cursor(CURSOR)
-      File.write(PROBE, "set_cursor(#{CURSOR}) accepted #{Time.now}\n") rescue nil
-    rescue StandardError => e
-      # PNG path rejected by this build; fall back to built-in cursor IDs, log all.
-      results = [0, 1, 67, 641].map do |id|
-        begin
-          view.set_cursor(id)
-          "id #{id}: ok"
-        rescue StandardError => e2
-          "id #{id}: #{e2.class}"
-        end
-      end
-      File.write(PROBE, "png raised #{e.class}; ints -> #{results.join('; ')}\n") rescue nil
-    end
 
     def initialize
       @face   = nil
@@ -181,7 +153,6 @@ module WallCutter
 
     def activate
       Sketchup.status_text = 'WallCutter: click a wall face, drag edges to resize, Enter to cut'
-      try_custom_cursor(Sketchup.active_model.active_view)
       show_dialog
     end
 
@@ -281,7 +252,11 @@ module WallCutter
       report("error: #{e.message}")
     end
 
+    # View#set_cursor is gone in this build (probe-verified), so the active-tool
+    # indicator is an on-screen badge instead; once a face is picked the cyan preview
+    # takes over the job.
     def draw(view)
+      draw_badge(view) unless @face&.valid?
       return unless @face&.valid?
       frame = current_frame(view)
       w = @params[:width].to_f
@@ -302,6 +277,15 @@ module WallCutter
         puts(e.backtrace.first(4).map { |l| "  #{l}" })
         report("draw error (see Ruby Console): #{e.class}: #{e.message}")
       end
+    end
+
+    def draw_badge(view)
+      box = [[12, 12, 0], [252, 12, 0], [252, 40, 0], [12, 40, 0]]
+      view.drawing_color = Sketchup::Color.new(0, 150, 255)
+      view.draw2d(GL_LINE_LOOP, box)
+      view.draw_text(Geom::Point3d.new(20, 20, 0), 'WallCutter ACTIVE - click a wall face')
+    rescue StandardError
+      @badge_failed ||= (puts 'WallCutter: 2d badge unsupported' ; true)
     end
 
     # ponytail: rebuilt per draw frame; outer loops are tiny, cache if walls get
