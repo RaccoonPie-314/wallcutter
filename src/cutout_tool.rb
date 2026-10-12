@@ -41,6 +41,11 @@ module WallCutter
       w <= avail_w && h <= avail_h
     end
 
+    # In-plane coords of a world point, origin = the face's reference vertex.
+    def plane_coords(pt)
+      [((pt - @ref) % @u), ((pt - @ref) % @v)]
+    end
+
     # World point at the opening's CENTER. Default horizontally centered; sill/left
     # measured from the face's bounding corners (spec positioning rules).
     def center_origin(w, h, sill = nil, left = nil)
@@ -53,6 +58,52 @@ module WallCutter
   end
 
   class CutoutTool
+    # --- units: internal lengths are always inches -------------------------------
+    UNIT_FACTORS = { 'in' => 1.0, 'cm' => 2.54, 'mm' => 25.4 }.freeze
+    LEN_RE = /\A\s*(-?[\d.]+)\s*(cm|mm|inch|in|")?\s*\z/i
+
+    # "11 cm" / "110 mm" / '4 in' / '4"' / "36" -> [inches, unit]; nil if not a length.
+    def self.parse_len(str)
+      m = LEN_RE.match(str.to_s)
+      return nil unless m
+      val = m[1].to_f
+      return nil if val.negative?
+      unit = case m[2].to_s.downcase
+             when 'cm', 'mm' then m[2].downcase
+             else 'in'
+             end
+      [val / UNIT_FACTORS[unit], unit]
+    end
+
+    def self.fmt_len(inches, unit)
+      v = (inches * UNIT_FACTORS[unit]).round(3)
+      v = v.to_i if (v - v.to_i).abs < 1e-9
+      "#{v} #{unit}"
+    end
+
+    # --- drag math (pure): mouse at (mu, mv) from the face's min corner ----------
+    MIN_SIZE = 1.0
+    HANDLES = { nw: [-1, 1], n: [0, 1], ne: [1, 1], e: [1, 0],
+                se: [1, -1], s: [0, -1], sw: [-1, -1], w: [-1, 0] }.freeze
+
+    def self.clamp(v, lo, hi)
+      [[v, lo].max, hi].min
+    end
+
+    def self.drag_resize(handle, mu, mv, left, sill, w, h, avail_w, avail_h)
+      r = left + w
+      t = sill + h
+      left = mu if %i[w nw sw].include?(handle)
+      r    = mu if %i[e ne se].include?(handle)
+      sill = mv if %i[s sw se].include?(handle)
+      t    = mv if %i[n nw ne].include?(handle)
+      left = clamp(left, 0.0, avail_w - MIN_SIZE)
+      sill = clamp(sill, 0.0, avail_h - MIN_SIZE)
+      r = clamp(r, left + MIN_SIZE, avail_w)
+      t = clamp(t, sill + MIN_SIZE, avail_h)
+      [left, sill, r - left, t - sill]
+    end
+
     HTML = <<~HTML
       <!DOCTYPE html><html><head><meta charset="utf-8"><style>
       body{font:13px -apple-system;margin:10px}label{display:block;margin:7px 0 1px}
@@ -60,20 +111,18 @@ module WallCutter
       button{width:100%;margin-top:12px;padding:7px;font-weight:600}
       </style></head><body onload="sketchup.ready()">
       <label>Preset<select id="preset" onchange="sketchup.preset(this.value)"></select></label>
-      <label>Width (in)<input id="w" type="number" onchange="push()"></label>
-      <label>Height (in)<input id="h" type="number" onchange="push()"></label>
-      <label>Sill from bottom (in)<input id="sill" type="number" placeholder="0" onchange="push()"></label>
-      <label>Left offset (in)<input id="left" type="number" placeholder="centered" onchange="push()"></label>
-      <label>Depth (in)<input id="depth" type="number" placeholder="auto through wall" onchange="push()"></label>
+      <label>Width (in / cm / mm)<input id="w" type="text" onchange="push()"></label>
+      <label>Height (in / cm / mm)<input id="h" type="text" onchange="push()"></label>
+      <label>Sill from bottom<input id="sill" type="text" placeholder="0" onchange="push()"></label>
+      <label>Left offset<input id="left" type="text" placeholder="centered" onchange="push()"></label>
+      <label>Depth<input id="depth" type="text" placeholder="auto through wall" onchange="push()"></label>
       <button onclick="sketchup.cut()">Cut</button>
       <script>
       function setPresets(p){var s=document.getElementById('preset');
         for(var k in p){var o=document.createElement('option');o.value=k;o.textContent=k;s.appendChild(o);}}
-      function fillForm(v){document.getElementById('w').value=v.width;
-        document.getElementById('h').value=v.height;
-        document.getElementById('sill').value=v.sill||0;
-        document.getElementById('left').value=(v.left==null?'':v.left);
-        document.getElementById('depth').value=(v.depth==null?'':v.depth);}
+      var IDS={width:'w',height:'h',sill:'sill',left:'left',depth:'depth'};
+      function fillForm(v){for(var k in IDS){var e=document.getElementById(IDS[k]);
+        if(e&&v[k]!=null)e.value=v[k];}}
       function g(id){return document.getElementById(id).value;}
       function push(){sketchup.params(JSON.stringify({width:g('w'),height:g('h'),
         sill:g('sill'),left:g('left'),depth:g('depth')}));}
@@ -90,10 +139,13 @@ module WallCutter
       @face   = nil
       @frame  = nil
       @params = PRESETS['Window'].merge(left: nil, depth: nil)
+      @units  = { width: 'in', height: 'in', sill: 'in', left: 'in', depth: 'in' }
+      @drag   = nil
+      @draw_err_shown = false
     end
 
     def activate
-      Sketchup.status_text = 'WallCutter: click a wall face, adjust in panel, Enter to cut'
+      Sketchup.status_text = 'WallCutter: click a wall face, drag edges to resize, Enter to cut'
       show_dialog
     end
 
@@ -109,16 +161,44 @@ module WallCutter
     end
 
     def onLButtonDown(_flags, x, y, view)
-      ph = view.pick_helper
-      ph.do_pick(x, y)
       # best_picked stops at a Group/Component wrapper, so walk the pick path to the
       # leaf face; walls inside groups must be pickable per the spec.
       @frame = nil
-      path = (ph.path_at(0) || [])
-      @face = path.grep(Sketchup::Face).last
+      if @face&.valid? && (@drag = hit_handle(view, x, y))
+        materialize_offsets(current_frame(view))
+        return
+      end
+      ph = view.pick_helper
+      ph.do_pick(x, y)
+      @face = (ph.path_at(0) || []).grep(Sketchup::Face).last
       best = ph.best_picked
       @face ||= best if best.is_a?(Sketchup::Face)
+      @draw_err_shown = false
       view.invalidate
+    end
+
+    def onMouseMove(_flags, x, y, view)
+      return unless @drag && @face&.valid?
+      ray = view.pickray(x, y)
+      return unless ray
+      frame = current_frame(view)
+      hit = Geom.intersect_line_plane(ray, [frame.ref, frame.n])
+      return unless hit
+      pu, pv = frame.plane_coords(hit)
+      w, h = @params[:width].to_f, @params[:height].to_f
+      @params[:left], @params[:sill], @params[:width], @params[:height] =
+        self.class.drag_resize(@drag, pu - frame.min_u, pv - frame.min_v,
+                               @params[:left].to_f, @params[:sill].to_f, w, h,
+                               frame.avail_w, frame.avail_h)
+      Sketchup.status_text = format('WallCutter: %0.1f x %0.1f (in) — Enter to cut',
+                                    @params[:width], @params[:height])
+      view.invalidate
+    end
+
+    def onLButtonUp(_flags, _x, _y, view)
+      return unless @drag
+      @drag = nil
+      push_form
     end
 
     def onReturn(view)
@@ -160,16 +240,17 @@ module WallCutter
       h = @params[:height].to_f
       return unless frame.fits?(w, h)
       o = frame.center_origin(w, h, @params[:sill], @params[:left])
-      pts = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map do |su, sv|
-        CutEngine.corner(o, frame.u, su * w / 2.0, frame.v, sv * h / 2.0)
-      end
+      pts = HANDLES.keys.map { |name| handle_point(o, frame, w, h, name) }
+      corners = HANDLES.values.select { |su, sv| su.abs == 1 && sv.abs == 1 }
+                            .map { |su, sv| CutEngine.corner(o, frame.u, su * w / 2.0, frame.v, sv * h / 2.0) }
       color = Sketchup::Color.new(0, 180, 255)
       view.drawing_color = color
-      view.draw(GL_LINE_LOOP, pts)
-      view.draw_points(pts, 6, 2, color)
+      view.draw(GL_LINE_LOOP, corners)
+      view.draw_points(pts, 5, 2, color)
     rescue StandardError => e
-      unless @draw_err_shown # report the full error once, then stay quiet per frame
+      unless @draw_err_shown
         @draw_err_shown = true
+        puts "[WallCutter] draw error: #{e.class}: #{e.message}"
         puts(e.backtrace.first(4).map { |l| "  #{l}" })
         report("draw error (see Ruby Console): #{e.class}: #{e.message}")
       end
@@ -187,13 +268,43 @@ module WallCutter
       end
     end
 
+    def handle_point(o, frame, w, h, name)
+      su, sv = HANDLES[name]
+      CutEngine.corner(o, frame.u, su * w / 2.0, frame.v, sv * h / 2.0)
+    end
+
+    def hit_handle(view, x, y)
+      frame = current_frame(view)
+      w = @params[:width].to_f
+      h = @params[:height].to_f
+      return nil unless frame.fits?(w, h)
+      o = frame.center_origin(w, h, @params[:sill], @params[:left])
+      HANDLES.each do |name, _|
+        sc = view.screen_coords(handle_point(o, frame, w, h, name))
+        return name if (x - sc.x).abs <= 8 && (y - sc.y).abs <= 8
+      end
+      nil
+    end
+
+    # nil left/sill mean "centered / default" — pin them to real numbers before a drag
+    def materialize_offsets(frame)
+      @params[:left] = (frame.avail_w - @params[:width]) / 2.0 if @params[:left].nil?
+      @params[:sill] ||= 0.0
+    end
+
+    def report(msg)
+      Sketchup.status_text = "WallCutter: #{msg}"
+      nil
+    end
+
+    # --- dialog ------------------------------------------------------------------
     def show_dialog
       @dlg = UI::HtmlDialog.new(dialog_title: 'WallCutter', preferences_name: 'wallcutter',
                                 width: 260, height: 330, style: UI::HtmlDialog::STYLE_DIALOG)
       @dlg.set_html(HTML)
       @dlg.add_action_callback('ready') do |_c, _|
         @dlg.execute_script("setPresets(#{PRESETS.to_json})")
-        @dlg.execute_script("fillForm(#{@params.to_json})")
+        push_form
       end
       @dlg.add_action_callback('preset') { |_c, name| apply_preset(name.to_s) }
       @dlg.add_action_callback('params') { |_c, raw| update_params(raw) }
@@ -201,29 +312,52 @@ module WallCutter
       @dlg.show
     end
 
+    # Send current params to the panel, each field shown in the unit it was typed in.
+    def push_form
+      return unless @dlg&.visible?
+      vals = {}
+      %i[width height sill left depth].each do |k|
+        v = @params[k]
+        vals[k.to_s] = v ? self.class.fmt_len(v.to_f, @units[k]) : ''
+      end
+      @dlg.execute_script("fillForm(#{vals.to_json})")
+    end
+
     def update_params(raw)
       vals = JSON.parse(raw.to_s)
-      @params[:width]  = vals['width'].to_f  if vals['width'].to_f  > 0
-      @params[:height] = vals['height'].to_f if vals['height'].to_f > 0
-      @params[:sill]   = vals['sill'].to_s.empty?  ? nil : vals['sill'].to_f
-      @params[:left]   = vals['left'].to_s.empty?  ? nil : vals['left'].to_f
-      @params[:depth]  = vals['depth'].to_s.empty? ? nil : vals['depth'].to_f
+      %w[width height].each { |k| assign_len(k, vals[k], min_exclusive: 0.0) }
+      %w[sill left].each   { |k| assign_len(k, vals[k], min_exclusive: nil) }
+      assign_len('depth', vals['depth'], min_exclusive: 0.0)
       @frame = nil
       Sketchup.active_model.active_view.invalidate
     rescue JSON::ParserError
       report('bad panel payload — ignored')
     end
 
-    def apply_preset(name)
-      @params = (PRESETS[name] || PRESETS['Window']).merge(left: nil, depth: nil)
-      @frame = nil
-      @dlg.execute_script("fillForm(#{@params.to_json})") if @dlg&.visible?
-      Sketchup.active_model.active_view.invalidate
+    def assign_len(key, incoming, min_exclusive:)
+      text = incoming.to_s.strip
+      sym  = key.to_sym
+      return @params[sym] = nil if text.empty? && sym != :width && sym != :height
+      parsed = self.class.parse_len(text)
+      unless parsed
+        report("#{key}: \"#{text}\" not a length (try 36, 11 cm, 4 in)")
+        return
+      end
+      inches = parsed[0]
+      if min_exclusive && inches <= min_exclusive
+        report("#{key}: must be greater than 0")
+        return
+      end
+      @params[sym] = inches
+      @units[sym]  = parsed[1]
     end
 
-    def report(msg)
-      Sketchup.status_text = "WallCutter: #{msg}"
-      nil
+    def apply_preset(name)
+      @params = (PRESETS[name] || PRESETS['Window']).merge(left: nil, depth: nil)
+      @units = { width: 'in', height: 'in', sill: 'in', left: 'in', depth: 'in' }
+      @frame = nil
+      push_form
+      Sketchup.active_model.active_view.invalidate
     end
   end
 end

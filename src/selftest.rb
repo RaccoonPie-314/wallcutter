@@ -122,6 +122,27 @@ module WallCutter
       check('frame: sill placement') { (o.z - 72.0).abs < 0.01 }
     end
 
+    def self.run_units
+      ct = CutoutTool
+      check('parse cm')      { (ct.parse_len('11 cm')[0] - 11.0 / 2.54).abs < 1e-6 && ct.parse_len('11 cm')[1] == 'cm' }
+      check('parse mm')      { (ct.parse_len('110 mm')[0] - 110.0 / 25.4).abs < 1e-6 }
+      check('parse in text') { (ct.parse_len('4 in')[0] - 4.0).abs < 1e-9 }
+      check('parse inches mark') { (ct.parse_len(%q{4"})[0] - 4.0).abs < 1e-9 }
+      check('parse plain = inches') { ct.parse_len('36') == [36.0, 'in'] }
+      check('parse sill 0 allowed') { ct.parse_len('0') == [0.0, 'in'] }
+      check('parse rejects junk') { ct.parse_len('abc').nil? && ct.parse_len('-5').nil? && ct.parse_len('').nil? }
+      back = ct.parse_len(ct.fmt_len(36.0, 'cm'))
+      check('fmt roundtrip cm') { (back[0] - 36.0).abs < 0.01 && back[1] == 'cm' }
+      l, s2, w, h = ct.drag_resize(:e, 50, 40, 10, 5, 30, 20, 100, 100)
+      check('drag e grows width') { l == 10 && s2 == 5 && w == 40 && h == 20 }
+      l, s2, w, h = ct.drag_resize(:nw, 5, 50, 10, 5, 30, 20, 100, 100)
+      check('drag nw moves left+top') { l == 5 && w == 35 && s2 == 5 && h == 45 }
+      l, s2, w, h = ct.drag_resize(:ne, 999, 999, 10, 5, 30, 20, 100, 100)
+      check('drag clamps to face') { w == 90 && h == 95 }
+      l, s2, w, h = ct.drag_resize(:s, 20, -999, 10, 5, 30, 20, 100, 100)
+      check('drag min size') { h >= ct::MIN_SIZE && s2 == 0 }
+    end
+
     def self.run
       # Start from a clean slate: a recovered/contaminated model (SketchUp restores
       # unsaved work after a force-quit) produces duplicate coplanar faces and lies.
@@ -130,7 +151,7 @@ module WallCutter
       # Explicit transaction around everything: pushpull silently no-ops when the
       # recovered undo stack leaves an unbalanced operation open.
       model.start_operation('WallCutter selftest', true)
-      %i[run_engine run_group run_drill run_frame].each do |m|
+      %i[run_units run_engine run_group run_drill run_frame].each do |m|
         begin
           send(m)
         rescue Exception => e
