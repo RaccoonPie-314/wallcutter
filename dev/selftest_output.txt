@@ -1,0 +1,38 @@
+PASS parse cm
+PASS parse mm
+PASS parse in text
+PASS parse inches mark
+PASS parse plain = inches
+PASS parse sill 0 allowed
+PASS parse rejects junk
+PASS fmt roundtrip cm
+PASS drag e grows width
+PASS drag nw moves left+top
+PASS drag clamps to face
+PASS drag min size
+PASS move repositions, size kept
+PASS move clamps inside face
+PASS engine cut commits
+PASS front skin split (hole made)
+PASS ray through opening clears
+PASS no collar/blocker at front plane
+PASS auto depth clears 48in wall
+PASS auto depth clears layered wall + cavity
+PASS deep block cut commits
+PASS deep block: no collar at front plane
+PASS no-op cut returns false
+PASS group wall: path is [group]
+PASS group wall: cut commits
+PASS group wall: hole made
+PASS group wall: duplicate instance survives
+PASS drill: sandwich axis found + cut committed
+PASS drill: wall skin split
+PASS drill: component restored
+PASS drill: ray clears along axis
+PASS drill: no sandwich -> false
+PASS frame: v is up
+PASS frame: u is along X
+PASS frame: fits hole
+PASS frame: rejects oversize
+PASS frame: sill placement
+selftest done

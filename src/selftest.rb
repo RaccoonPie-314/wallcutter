@@ -28,6 +28,20 @@ module WallCutter
       f
     end
 
+    # Raytest lies in this build, so verify holes by face census: no face may sit
+    # inside the opening footprint at (or just outside) the front plane. A "collar"
+    # rim or an unpushed inner face shows up here; rings/jambs are excluded by area.
+    def self.hole_blockers(ents, center, u, v, w, h, n)
+      ents.grep(Sketchup::Face).select do |f|
+        next false unless f.area <= w * h * 1.1
+        d = f.bounds.center - center
+        off = d % n
+        next false unless off >= -1.5 && off <= 1.5
+        pu = (d - Geom::Vector3d.new(n.x * off, n.y * off, n.z * off))
+        (pu % u).abs <= w / 2.0 + 1.0 && (pu % v).abs <= h / 2.0 + 1.0
+      end
+    end
+
     def self.run_engine
       model = Sketchup.active_model
       ents  = model.entities
@@ -42,6 +56,8 @@ module WallCutter
         puts("  diag: raw=#{model.raytest(Geom::Point3d.new(60.0, -20.0, 54.0), Y_AXIS).inspect[0, 120]} hit_at=#{hit ? hit[0].to_a.map { |x| x.round(1) }.inspect : 'nil'} on=#{hit ? hit[2].class : '-'}") if hit
         hit.nil?
       end
+      blockers = hole_blockers(ents, Geom::Point3d.new(60.0, 0, 54.0), X_AXIS, Z_AXIS, 36.0, 48.0, Y_AXIS)
+      check('no collar/blocker at front plane') { blockers.empty? }
       # AUTO depth (nil) must clear a wall thicker than the old 24in fallback...
       box_wall(ents, 130.0, 120.0, 108.0, 48.0) # 48in-thick wall at x=130..250
       auto_ok = CutEngine.cut(Geom::Point3d.new(190.0, 0, 54.0), Y_AXIS,
@@ -57,6 +73,16 @@ module WallCutter
                              X_AXIS, Z_AXIS, 36.0, 48.0)
       check('auto depth clears layered wall + cavity') do
         lay_ok && model.raytest(Geom::Point3d.new(320.0, -20.0, 54.0), Y_AXIS).nil?
+      end
+      # deep block repro: user's model had a 227in-deep block; cuts left a 1in collar
+      box_wall(ents, 900.0, 137.0, 132.0, 227.0)
+      deep_ok = CutEngine.cut(Geom::Point3d.new(968.5, 0, 66.0), Y_AXIS,
+                              X_AXIS, Z_AXIS, 36.0, 48.0)
+      check('deep block cut commits') { deep_ok }
+      deep_blockers = hole_blockers(ents, Geom::Point3d.new(968.5, 0, 66.0), X_AXIS, Z_AXIS, 36.0, 48.0, Y_AXIS)
+      check('deep block: no collar at front plane') do
+        deep_blockers.each { |f| puts "  blocker a=#{f.area.round(1)} c=[#{f.bounds.center.to_a.map { |x| x.round(1) }.join(',')}]" }
+        deep_blockers.empty?
       end
       check('no-op cut returns false') do
         !CutEngine.cut(Geom::Point3d.new(60.0, -360.0, 54.0), Y_AXIS,

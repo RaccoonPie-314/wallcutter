@@ -1,0 +1,1 @@
+ERROR NoMethodError: undefined method `round' for Point3d(735, 403.5, -0.512602):Geom::Point3d
