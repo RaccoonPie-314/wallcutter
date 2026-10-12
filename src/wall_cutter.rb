@@ -151,7 +151,8 @@ module WallCutter
     false
   end
 
-  ICON_DIR = File.join(File.dirname(__FILE__), 'icons')
+  # Loader sits at Plugins/wall_cutter.rb; payload ships in Plugins/wall_cutter/
+  ICON_DIR = File.join(File.dirname(__FILE__), 'wall_cutter', 'icons')
 
   # SketchUp 2026 removed UI.create_command; UI::Command.new(prog_id){action} is the
   # classic form that still exists. Everything here is feature-detected: if command or
