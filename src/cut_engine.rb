@@ -70,6 +70,7 @@ module WallCutter
           cut_any = true if cut_layer(ents, planes[i][1], o, un, ut, vt, wl, hl, t_in, t_out - t_in)
           i += 2 # pushpull already holed the exit face; skip it as a future entry
         end
+        clear_hole_debris(ents, o, un, ut, vt, wl, hl, dl) if cut_any
         if cut_any
           model.commit_operation
           true
@@ -148,6 +149,25 @@ module WallCutter
         cleared = true
       end
       cleared
+    end
+
+    # This build's pushpull sometimes leaves rim strips (1in-wide slivers) or an
+    # unpushed inner plug inside the hole column, depending on face winding. Sweep the
+    # opening footprint at all depths: erase faces too small to be jambs (area < min
+    # edge x 1.5) or plug-sized faces; rings and full jambs always survive both tests.
+    def self.clear_hole_debris(ents, o, un, ut, vt, w, h, dl)
+      ents.grep(Sketchup::Face).each do |f|
+        next unless f.valid?
+        small  = f.area < [w, h].min * 1.5
+        plug   = (f.area - w * h).abs < w * h * 0.1
+        next unless small || plug
+        d = f.bounds.center - o
+        off = d % un
+        next unless off >= -2.0 && off <= dl + 2.0
+        pu = d - Geom::Vector3d.new(un.x * off, un.y * off, un.z * off)
+        next unless (pu % ut).abs <= w / 2.0 + 0.5 && (pu % vt).abs <= h / 2.0 + 0.5
+        f.erase!
+      end
     end
 
     # Face centered on +center+ with area ~ +area+. Tolerance-based identity check:

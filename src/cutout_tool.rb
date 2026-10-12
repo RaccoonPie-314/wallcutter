@@ -142,21 +142,32 @@ module WallCutter
       model.select_tool(new)
     end
 
+    PROBE = '/Users/mengly/Documents/Qoder/wallcutter/dev/cursor_probe.txt'
+
     def onSetCursor(view, _flags, _x, _y)
-      @cursor_probe ||= begin
-        File.write(File.join(WallCutter::ICON_DIR, '..', '..', '..', '..', '..', '..',
-                             'Documents', 'Qoder', 'wallcutter', 'dev', 'cursor_probe.txt'),
-                   "onSetCursor fired #{Time.now}\n") rescue nil
-        true
+      unless @cursor_probed
+        @cursor_probed = true
+        File.write(PROBE, "onSetCursor fired #{Time.now} try set_cursor...\n") rescue nil
       end
       try_custom_cursor(view)
     end
 
-    # Probe marker removes all doubt about whether onSetCursor fires at all.
     def try_custom_cursor(view)
+      return if @cursor_done
+      @cursor_done = true
       view.set_cursor(CURSOR)
+      File.write(PROBE, "set_cursor(#{CURSOR}) accepted #{Time.now}\n") rescue nil
     rescue StandardError => e
-      @cursor_failed ||= (puts "WallCutter: custom cursor unavailable (#{e.class})" ; true)
+      # PNG path rejected by this build; fall back to built-in cursor IDs, log all.
+      results = [0, 1, 67, 641].map do |id|
+        begin
+          view.set_cursor(id)
+          "id #{id}: ok"
+        rescue StandardError => e2
+          "id #{id}: #{e2.class}"
+        end
+      end
+      File.write(PROBE, "png raised #{e.class}; ints -> #{results.join('; ')}\n") rescue nil
     end
 
     def initialize

@@ -58,6 +58,18 @@ module WallCutter
       end
       blockers = hole_blockers(ents, Geom::Point3d.new(60.0, 0, 54.0), X_AXIS, Z_AXIS, 36.0, 48.0, Y_AXIS)
       check('no collar/blocker at front plane') { blockers.empty? }
+      # debris sweeper self-check: plant a rim strip + a plug, sweep, column must be
+      # clean. (The planted plug splits the jambs, so "kept" is asserted via the
+      # post-sweep census, not an intact-jamb count.)
+      jambs = ents.grep(Sketchup::Face).count { |f| f.area.between?(400, 2000) && (f.bounds.center - Geom::Point3d.new(60, 6, 54)).length < 30 }
+      check('4 jambs present before planting debris') { jambs == 4 }
+      strip = ents.add_face([42, -0.4, 30], [78, -0.4, 30], [78, -0.4, 31], [42, -0.4, 31])
+      plugf = ents.add_face([42, 6, 30], [78, 6, 30], [78, 6, 78], [42, 6, 78])
+      CutEngine.clear_hole_debris(ents, Geom::Point3d.new(60.0, 0, 54.0), Y_AXIS,
+                                  X_AXIS, Z_AXIS, 36.0, 48.0, 14.0)
+      check('debris sweeper removes strip and plug') { !strip.valid? && !plugf.valid? }
+      post = hole_blockers(ents, Geom::Point3d.new(60.0, 0, 54.0), X_AXIS, Z_AXIS, 36.0, 48.0, Y_AXIS)
+      check('column clean after sweep') { post.empty? }
       # AUTO depth (nil) must clear a wall thicker than the old 24in fallback...
       box_wall(ents, 130.0, 120.0, 108.0, 48.0) # 48in-thick wall at x=130..250
       auto_ok = CutEngine.cut(Geom::Point3d.new(190.0, 0, 54.0), Y_AXIS,

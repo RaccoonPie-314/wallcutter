@@ -16,6 +16,9 @@ PASS engine cut commits
 PASS front skin split (hole made)
 PASS ray through opening clears
 PASS no collar/blocker at front plane
+PASS 4 jambs present before planting debris
+PASS debris sweeper removes strip and plug
+PASS column clean after sweep
 PASS auto depth clears 48in wall
 PASS auto depth clears layered wall + cavity
 PASS deep block cut commits
