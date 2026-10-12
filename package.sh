@@ -5,6 +5,7 @@ rm -rf build wall_cutter.rbz
 mkdir -p build/wall_cutter
 cp src/wall_cutter.rb build/
 cp src/cut_engine.rb src/cutout_tool.rb src/selftest.rb build/wall_cutter/
+cp -R src/icons build/wall_cutter/icons
 ( cd build && zip -q -r ../wall_cutter.rbz wall_cutter.rb wall_cutter )
 echo "built wall_cutter.rbz"
 

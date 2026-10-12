@@ -151,14 +151,71 @@ module WallCutter
     false
   end
 
+  ICON_DIR = File.join(File.dirname(__FILE__), 'icons')
+
+  # SketchUp 2026 removed UI.create_command; UI::Command.new(prog_id){action} is the
+  # classic form that still exists. Everything here is feature-detected: if command or
+  # toolbar registration fails at all, the plugin still loads with plain menu items.
+  def self.make_command(progid, text, tip, desc, icon)
+    cmd =
+      if UI.respond_to?(:create_command)
+        UI.create_command(progid) { |c| c.set_proc { yield } }
+      elsif defined?(UI::Command)
+        UI::Command.new(progid) { yield }
+      end
+    return nil unless cmd
+    cmd.menu_text = text if cmd.respond_to?(:menu_text=)
+    cmd.tooltip = tip if cmd.respond_to?(:tooltip=)
+    cmd.description = desc if cmd.respond_to?(:description=)
+    if cmd.respond_to?(:small_icon=)
+      cmd.small_icon = icon
+      cmd.large_icon = icon if cmd.respond_to?(:large_icon=)
+    end
+    cmd
+  rescue StandardError => e
+    puts "WallCutter: command #{progid} unavailable (#{e.class}: #{e.message})"
+    nil
+  end
+
+  def self.cutout_command
+    @cutout_command ||= make_command('wallcutter_smart_cutout', 'Smart Cutout',
+                                     'WallCutter Smart Cutout',
+                                     'Cut a window/door/opening through a wall face',
+                                     File.join(ICON_DIR, 'cutout.png')) do
+      WallCutter::CutoutTool.activate
+    end
+  end
+
+  def self.drill_command
+    @drill_command ||= make_command('wallcutter_drill_component', 'Drill Component',
+                                    'WallCutter Drill Component',
+                                    'Drill a through-hole sized to the selected component',
+                                    File.join(ICON_DIR, 'drill.png')) do
+      WallCutter.drill_selected
+    end
+  end
+
   unless file_loaded?(__FILE__)
     require 'wall_cutter/cut_engine'
     require 'wall_cutter/cutout_tool'
     menu = UI.menu('Plugins').add_submenu('WallCutter') # shows under Extensions in 2021+
-    menu.add_item('Smart Cutout')     { WallCutter::CutoutTool.activate }
-    menu.add_item('Drill Component')  { WallCutter.drill_selected }
+    cc = cutout_command
+    dc = drill_command
+    if cc then menu.add_item(cc) else menu.add_item('Smart Cutout') { WallCutter::CutoutTool.activate } end
+    if dc then menu.add_item(dc) else menu.add_item('Drill Component') { WallCutter.drill_selected } end
+    if cc && dc
+      begin
+        toolbar = UI::Toolbar.new('WallCutter')
+        toolbar.add_item(cc)
+        toolbar.add_item(dc)
+        toolbar.show
+      rescue StandardError => e
+        puts "WallCutter: toolbar skipped (#{e.class}: #{e.message})"
+      end
+    end
     UI.add_context_menu_handler do |cm|
-      cm.add_item('Drill Through Wall') { WallCutter.drill_selected } if WallCutter.drillable?(Sketchup.active_model.selection)
+      next unless WallCutter.drillable?(Sketchup.active_model.selection)
+      dc ? cm.add_item(dc) : cm.add_item('Drill Through Wall') { WallCutter.drill_selected }
     end
     file_loaded(__FILE__)
   end
