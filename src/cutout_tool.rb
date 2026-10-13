@@ -155,7 +155,8 @@ module WallCutter
       @params = PRESETS['Window'].merge(left: nil, depth: nil)
       @units  = { width: 'in', height: 'in', sill: 'in', left: 'in', depth: 'in' }
       @drag   = nil
-      @shown_hole = nil
+      @shown_hole = nil # persistent SELECTION (click / dropdown) - what Refill acts on
+      @hover_hole = nil # transient, cursor-bound highlight only
       @draw_err_shown = false
     end
 
@@ -291,7 +292,8 @@ module WallCutter
     # takes over the job.
     def draw(view)
       draw_badge(view) unless @face&.valid?
-      draw_hole_box(view)
+      draw_hole_box(view, hole_rec, Sketchup::Color.new(255, 140, 0), 'selected')
+      draw_hole_box(view, hover_rec, Sketchup::Color.new(0, 190, 255), nil)
       return unless @face&.valid?
       frame = current_frame(view)
       w = @params[:width].to_f
@@ -399,17 +401,21 @@ module WallCutter
     def hover_hole(view, x, y)
       ray = view.pickray(x, y)
       id  = live_hole(ray && self.class.hole_at_ray(CutEngine.openings, ray))
-      return if id == @shown_hole
-      @shown_hole = id
+      return if id == @hover_hole
+      @hover_hole = id
       if id
-        rec = hole_rec
-        report(format('hole %d — %0.0f x %0.0f in — click to keep it selected',
+        rec = CutEngine.openings.find { |r| r['id'] == id }
+        report(format('hole %d — %0.0f x %0.0f in — click to select it, then Refill',
                       id, rec['w'], rec['h']))
-        sync_hole_field
       else
         report('click a wall face, drag edges to resize, Enter to cut')
       end
       view.invalidate
+    end
+
+    def hover_rec
+      return nil if @hover_hole.nil? || @hover_hole == @shown_hole
+      CutEngine.openings.find { |r| r['id'] == @hover_hole }
     end
 
     # Refill the selected hole, or refill and re-cut it smaller/bigger in place. Two
@@ -428,6 +434,7 @@ module WallCutter
                            w, h, @params[:depth], path: path)
       end
       @shown_hole = nil
+      @hover_hole = nil
       # Refill merges away the ring faces the preview was drawn on, so @face would be a
       # dangling reference: the next Enter would report 'nothing picked' and the user
       # would cut into a wall that is no longer there.
@@ -451,10 +458,9 @@ module WallCutter
       @shown_hole && CutEngine.openings.find { |r| r['id'] == @shown_hole }
     end
 
-    # Orange wireframe of the opening's box + a floating number, so the model and the
-    # dropdown cross-reference each other.
-    def draw_hole_box(view)
-      rec = hole_rec
+    # Wireframe of the opening's box + a floating number, so the model and the dropdown
+    # cross-reference each other. Orange = selection, cyan = hover.
+    def draw_hole_box(view, rec, color, suffix)
       return unless rec
       o = Geom::Point3d.new(*rec['origin'])
       n = Geom::Vector3d.new(*rec['n'])
@@ -464,11 +470,12 @@ module WallCutter
         CutEngine.corner(o, u, su * rec['w'] / 2.0, v, sv * rec['h'] / 2.0)
       end
       back = front.map { |pt| CutEngine.corner(pt, n, rec['depth'], u, 0) }
-      view.drawing_color = Sketchup::Color.new(255, 140, 0)
+      view.drawing_color = color
       view.draw(GL_LINE_LOOP, front)
       view.draw(GL_LINE_LOOP, back)
       view.draw(GL_LINES, front.zip(back).flatten(1))
-      view.draw_text(view.screen_coords(o), "hole #{rec['id']}")
+      view.draw_text(view.screen_coords(o),
+                     suffix ? "hole #{rec['id']} - #{suffix}" : "hole #{rec['id']}")
     end
 
     def sync_hole_field
