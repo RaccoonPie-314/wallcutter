@@ -133,6 +133,11 @@ module WallCutter
       ok = CutEngine.cut(Geom::Point3d.new(300.0, 0, 54.0), Y_AXIS,
                          X_AXIS, Z_AXIS, 36.0, 48.0, 14.0, path: path)
       check('group wall: path is [group]') { path.size == 1 && path[0] == grp }
+      # 2026 has no find_entity_by_pid on Model or Sketchup (probe-verified), so a
+      # recorded path resolves by scanning entities for the stored persistent_id.
+      check('group wall: persistent_id resolves by scan') do
+        model.entities.find { |e| e.respond_to?(:persistent_id) && e.persistent_id == grp.persistent_id } == grp
+      end
       check('group wall: cut commits')     { ok }
       check('group wall: hole made')       { grp.entities.grep(Sketchup::Face).length > before }
       dup = ents.add_instance(grp.definition,
@@ -221,15 +226,103 @@ module WallCutter
       check('move clamps inside face') { l == 70 && s2 == 80 && w == 30 && h == 20 }
     end
 
+    # Hole registry + identification: the manager's whole Phase 1 surface.
+    def self.run_holes
+      model = Sketchup.active_model
+      ents  = model.entities
+      before = CutEngine.openings(model).size
+      box_wall(ents, 1300.0, 120.0, 108.0, 12.0)
+      box_wall(ents, 1450.0, 120.0, 108.0, 12.0)
+      CutEngine.cut(Geom::Point3d.new(1360.0, 0, 54.0), Y_AXIS, X_AXIS, Z_AXIS, 36.0, 48.0, 14.0)
+      CutEngine.cut(Geom::Point3d.new(1510.0, 0, 54.0), Y_AXIS, X_AXIS, Z_AXIS, 24.0, 30.0, 14.0)
+      list = CutEngine.openings(model)
+      r1 = list[-2]
+      r2 = list[-1]
+      check('registry records one entry per cut') { list.size == before + 2 }
+      check('ids unique and ordered')             { r2['id'] == r1['id'] + 1 }
+      check('record keeps the cut rect')           { r1['w'] == 36.0 && r1['h'] == 48.0 && r2['w'] == 24.0 }
+      check('record keeps the cut layers') do
+        r1['layers'].size == 1 && (r1['layers'][0][0] - 0.0).abs < 0.01 &&
+          (r1['layers'][0][1] - 12.0).abs < 0.01
+      end
+      check('record keeps world origin + depth') do
+        r1['origin'] == [1360.0, 0.0, 54.0] && (r1['depth'] - 12.0).abs < 0.01
+      end
+      ct = CutoutTool
+      check('hover identifies the hole under the ray') do
+        ct.hole_at_ray(list, [Geom::Point3d.new(1360.0, -30.0, 54.0), Y_AXIS]) == r1['id'] &&
+          ct.hole_at_ray(list, [Geom::Point3d.new(1510.0, -30.0, 54.0), Y_AXIS]) == r2['id']
+      end
+      check('hover ignores empty space') do
+        ct.hole_at_ray(list, [Geom::Point3d.new(1620.0, -30.0, 54.0), Y_AXIS]).nil?
+      end
+      check('hover ignores a ray pointing away') do
+        ct.hole_at_ray(list, [Geom::Point3d.new(1360.0, -30.0, 54.0), Y_AXIS.reverse]).nil?
+      end
+      check('hole label shows size, not just a number') { ct.hole_label(r1) == "#{r1['id']} · 36 x 48 in" }
+      check('registry survives a JSON roundtrip') { CutEngine.openings(model).last['id'] == r2['id'] }
+    end
+
+    # Phase 2: refill (undo one cut without touching the others) and the tweak path.
+    def self.run_refill
+      model = Sketchup.active_model
+      ents  = model.entities
+      box_wall(ents, 1700.0, 120.0, 108.0, 12.0)
+      solid = ents.grep(Sketchup::Face).length
+      CutEngine.cut(Geom::Point3d.new(1760.0, 0, 54.0), Y_AXIS, X_AXIS, Z_AXIS, 36.0, 48.0, 14.0)
+      rec = CutEngine.openings(model).find { |r| r['origin'] == [1760.0, 0.0, 54.0] }
+      check('refill: cut opened the wall first') do
+        model.raytest(Geom::Point3d.new(1760.0, -20.0, 54.0), Y_AXIS).nil? &&
+          ents.grep(Sketchup::Face).length > solid
+      end
+      check('refill: reports success') { CutEngine.refill_hole(model, rec) }
+      check('refill: face count back to solid wall') { ents.grep(Sketchup::Face).length == solid }
+      check('refill: front skin whole again') do
+        hit = WallCutter.ray(model, Geom::Point3d.new(1760.0, -20.0, 54.0), Y_AXIS)
+        puts("  diag: refill ray hit=#{hit ? hit[0].to_a.map { |x| x.round(2) }.inspect : 'nil'}") if hit.nil? || hit[0].y.abs > 0.01
+        !hit.nil? && hit[0].y.abs < 0.01
+      end
+      check('refill: registry entry dropped') { CutEngine.openings(model).none? { |r| r['id'] == rec['id'] } }
+      check('refilled hole is no longer selectable') { !CutEngine.hole_open?(model, rec) }
+      check('refilling a stale hole refuses') { !CutEngine.refill_hole(model, rec) }
+      # tweak: reopen smaller at the same centre — only the new rect is open again
+      CutEngine.cut(Geom::Point3d.new(1760.0, 0, 54.0), Y_AXIS, X_AXIS, Z_AXIS, 36.0, 48.0, 14.0)
+      r2 = CutEngine.openings(model).find { |r| r['origin'] == [1760.0, 0.0, 54.0] }
+      CutEngine.refill_hole(model, r2)
+      CutEngine.cut(Geom::Point3d.new(1760.0, 0, 54.0), Y_AXIS, X_AXIS, Z_AXIS, 12.0, 12.0, 14.0)
+      check('fresh hole is selectable') { CutEngine.hole_open?(model, CutEngine.openings(model).last) }
+      check('tweak: 12x12 re-cut opens the centre only') do
+        model.raytest(Geom::Point3d.new(1760.0, -20.0, 54.0), Y_AXIS).nil? &&
+          !model.raytest(Geom::Point3d.new(1744.0, -20.0, 54.0), Y_AXIS).nil?
+      end
+      # a cavity wall (two skins 8in apart) records two layers; refill closes all four
+      a = ents.add_face([1900, 0, 0], [2020, 0, 0], [2020, 0, 108], [1900, 0, 108])
+      a.reverse! unless a.normal.y > 0
+      a.pushpull(12)
+      b = ents.add_face([1900, 20, 0], [2020, 20, 0], [2020, 20, 108], [1900, 20, 108])
+      b.reverse! unless b.normal.y > 0
+      b.pushpull(12)
+      cavity_solid = ents.grep(Sketchup::Face).length
+      CutEngine.cut(Geom::Point3d.new(1960.0, 0, 54.0), Y_AXIS, X_AXIS, Z_AXIS, 36.0, 48.0)
+      r3 = CutEngine.openings(model).find { |r| r['origin'] == [1960.0, 0.0, 54.0] }
+      check('cavity wall: two layers recorded') { r3['layers'].size == 2 }
+      check('cavity wall: refill closes every layer') do
+        CutEngine.refill_hole(model, r3) && ents.grep(Sketchup::Face).length == cavity_solid
+      end
+    end
+
     def self.run
       # Start from a clean slate: a recovered/contaminated model (SketchUp restores
       # unsaved work after a force-quit) produces duplicate coplanar faces and lies.
       model = Sketchup.active_model
       model.entities.clear!
+      # Records describe geometry that no longer exists after the wipe, and leftover
+      # entries from an earlier run would tie-break hover tests against this run's cuts.
+      model.set_attribute('WallCutter', 'openings', '[]')
       # Explicit transaction around everything: pushpull silently no-ops when the
       # recovered undo stack leaves an unbalanced operation open.
       model.start_operation('WallCutter selftest', true)
-      %i[run_units run_engine run_group run_drill run_frame].each do |m|
+      %i[run_units run_engine run_group run_drill run_frame run_holes run_refill].each do |m|
         begin
           send(m)
         rescue Exception => e

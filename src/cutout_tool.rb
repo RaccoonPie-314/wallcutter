@@ -116,15 +116,22 @@ module WallCutter
       button{width:100%;margin-top:12px;padding:7px;font-weight:600}
       </style></head><body onload="sketchup.ready()">
       <label>Preset<select id="preset" onchange="sketchup.preset(this.value)"></select></label>
+      <label>Hole<select id="hole" onchange="sketchup.hole(this.value)"></select></label>
       <label>Width (in / cm / mm)<input id="w" type="text" onchange="push()"></label>
       <label>Height (in / cm / mm)<input id="h" type="text" onchange="push()"></label>
       <label>Sill from bottom<input id="sill" type="text" placeholder="0" onchange="push()"></label>
       <label>Left offset<input id="left" type="text" placeholder="centered" onchange="push()"></label>
       <label>Depth<input id="depth" type="text" placeholder="auto through wall" onchange="push()"></label>
       <button onclick="sketchup.cut()">Cut</button>
+      <button onclick="sketchup.refill(0)">Refill hole</button>
+      <button onclick="sketchup.refill(1)">Refill &amp; re-cut at size above</button>
       <script>
       function setPresets(p){var s=document.getElementById('preset');
         for(var k in p){var o=document.createElement('option');o.value=k;o.textContent=k;s.appendChild(o);}}
+      function setHoles(a){var s=document.getElementById('hole');s.innerHTML='';
+        if(!a.length){var o=document.createElement('option');o.value='';o.textContent='(no recorded holes — older cuts are untracked)';s.appendChild(o);return;}
+        a.forEach(function(x){var e=document.createElement('option');e.value=x.id;e.textContent=x.label;s.appendChild(e);});}
+      function selHole(id){document.getElementById('hole').value=id;}
       var IDS={width:'w',height:'h',sill:'sill',left:'left',depth:'depth'};
       function fillForm(v){for(var k in IDS){var e=document.getElementById(IDS[k]);
         if(e&&v[k]!=null)e.value=v[k];}}
@@ -148,11 +155,16 @@ module WallCutter
       @params = PRESETS['Window'].merge(left: nil, depth: nil)
       @units  = { width: 'in', height: 'in', sill: 'in', left: 'in', depth: 'in' }
       @drag   = nil
+      @shown_hole = nil
       @draw_err_shown = false
     end
 
     def activate
-      Sketchup.status_text = 'WallCutter: click a wall face, drag edges to resize, Enter to cut'
+      Sketchup.status_text = if CutEngine.openings.empty?
+                               'WallCutter: click a wall face — existing openings are untracked until re-cut'
+                             else
+                               'WallCutter: click a wall face, hover a hole to select it, Enter to cut'
+                             end
       show_dialog
     end
 
@@ -183,6 +195,18 @@ module WallCutter
       # leaf face; walls inside groups must be pickable per the spec.
       @frame = nil
       @drag_off = nil
+      ray = view.pickray(x, y)
+      hid = live_hole(ray && self.class.hole_at_ray(CutEngine.openings, ray))
+      if hid && !(@face&.valid? && hit_handle(view, x, y))
+        # A hole is empty space: picking it must select the hole, not the far skin
+        # behind it. Aim at the reveal face to cut a second layer through an opening.
+        @shown_hole = hid
+        @face = nil
+        @frame = nil
+        sync_hole_field
+        view.invalidate
+        return
+      end
       if @face&.valid? && (@drag = hit_handle(view, x, y))
         materialize_offsets(current_frame(view))
         if @drag == :move
@@ -193,6 +217,7 @@ module WallCutter
       end
       ph = view.pick_helper
       ph.do_pick(x, y)
+      @shown_hole = nil
       @face = (ph.path_at(0) || []).grep(Sketchup::Face).last
       best = ph.best_picked
       @face ||= best if best.is_a?(Sketchup::Face)
@@ -201,7 +226,10 @@ module WallCutter
     end
 
     def onMouseMove(_flags, x, y, view)
-      return unless @drag && @face&.valid?
+      unless @drag && @face&.valid?
+        hover_hole(view, x, y)
+        return
+      end
       mu, mv = plane_uv(view, x, y)
       return unless mu
       if @drag == :move && @drag_off
@@ -235,7 +263,12 @@ module WallCutter
     end
 
     def commit_cut(view)
-      return report('nothing picked') unless @face&.valid?
+      unless @face
+        return report('nothing picked — click a wall face first')
+      end
+      unless @face.valid?
+        return report('the picked face was deleted (refill?) — click the wall again')
+      end
       frame = current_frame(view)
       w = @params[:width].to_f
       h = @params[:height].to_f
@@ -247,6 +280,7 @@ module WallCutter
       ok = CutEngine.cut(origin, frame.n, frame.u, frame.v, w, h, @params[:depth],
                          path: WallCutter.face_path(@face))
       report(ok ? 'cut done — click next face or Esc' : 'cut removed nothing — set depth manually')
+      push_holes if ok
       view.invalidate
     rescue StandardError => e
       report("error: #{e.message}")
@@ -257,6 +291,7 @@ module WallCutter
     # takes over the job.
     def draw(view)
       draw_badge(view) unless @face&.valid?
+      draw_hole_box(view)
       return unless @face&.valid?
       frame = current_frame(view)
       w = @params[:width].to_f
@@ -324,6 +359,131 @@ module WallCutter
       @params[:sill] ||= 0.0
     end
 
+    # --- hole manager: identify recorded openings ---------------------------------
+    def self.hole_label(rec)
+      format('%d · %0.0f x %0.0f in', rec['id'], rec['w'], rec['h'])
+    end
+
+    # A cut hole is empty space, so hover cannot face-pick it: intersect the view ray
+    # with each recorded opening's front plane and test the hit against its rect.
+    # Returns the nearest hole's id, or nil.
+    def self.hole_at_ray(openings, ray)
+      best_id = nil
+      best_d  = nil
+      dir = Geom::Vector3d.new(*ray[1].to_a)
+      openings.each do |rec|
+        o = Geom::Point3d.new(*rec['origin'])
+        p = Geom.intersect_line_plane(ray, [o, Geom::Vector3d.new(*rec['n'])])
+        next unless p
+        d = (p - ray[0]) % dir
+        next if d <= 0.01
+        dp = p - o
+        next unless (dp % Geom::Vector3d.new(*rec['u'])).abs <= rec['w'] / 2.0 &&
+                    (dp % Geom::Vector3d.new(*rec['v'])).abs <= rec['h'] / 2.0
+        if best_d.nil? || d < best_d
+          best_d  = d
+          best_id = rec['id']
+        end
+      end
+      best_id
+    end
+
+    # Ignore records whose hole is gone (refilled, or left over from another model
+    # state) so they can neither highlight nor swallow a click.
+    def live_hole(id)
+      return nil unless id
+      rec = CutEngine.openings.find { |r| r['id'] == id }
+      rec && CutEngine.hole_open?(Sketchup.active_model, rec) ? id : nil
+    end
+
+    def hover_hole(view, x, y)
+      ray = view.pickray(x, y)
+      id  = live_hole(ray && self.class.hole_at_ray(CutEngine.openings, ray))
+      return if id == @shown_hole
+      @shown_hole = id
+      if id
+        rec = hole_rec
+        report(format('hole %d — %0.0f x %0.0f in — click to keep it selected',
+                      id, rec['w'], rec['h']))
+        sync_hole_field
+      else
+        report('click a wall face, drag edges to resize, Enter to cut')
+      end
+      view.invalidate
+    end
+
+    # Refill the selected hole, or refill and re-cut it smaller/bigger in place. Two
+    # operations by design: one Cmd-Z brings the old opening back, a second re-opens it.
+    def refill_selected(tweak)
+      rec = hole_rec
+      return report('no hole selected — hover or click one first') unless rec
+      model = Sketchup.active_model
+      path  = CutEngine.hole_path(model, rec) || []
+      ok    = CutEngine.refill_hole(model, rec)
+      if ok && tweak
+        w = @params[:width].to_f
+        h = @params[:height].to_f
+        ok = CutEngine.cut(Geom::Point3d.new(*rec['origin']), Geom::Vector3d.new(*rec['n']),
+                           Geom::Vector3d.new(*rec['u']), Geom::Vector3d.new(*rec['v']),
+                           w, h, @params[:depth], path: path)
+      end
+      @shown_hole = nil
+      # Refill merges away the ring faces the preview was drawn on, so @face would be a
+      # dangling reference: the next Enter would report 'nothing picked' and the user
+      # would cut into a wall that is no longer there.
+      @face = nil
+      @frame = nil
+      push_holes
+      report(if !ok
+               'geometry changed around this hole — repair it by hand'
+             elsif tweak
+               nid = CutEngine.openings(model).last['id']
+               format('refilled and re-cut as hole %d — %0.0f x %0.0f in, same centre', nid, w, h)
+             else
+               "hole #{rec['id']} refilled — the wall is solid again"
+             end)
+      model.active_view.invalidate
+    rescue StandardError => e
+      report("error: #{e.message}")
+    end
+
+    def hole_rec
+      @shown_hole && CutEngine.openings.find { |r| r['id'] == @shown_hole }
+    end
+
+    # Orange wireframe of the opening's box + a floating number, so the model and the
+    # dropdown cross-reference each other.
+    def draw_hole_box(view)
+      rec = hole_rec
+      return unless rec
+      o = Geom::Point3d.new(*rec['origin'])
+      n = Geom::Vector3d.new(*rec['n'])
+      u = Geom::Vector3d.new(*rec['u'])
+      v = Geom::Vector3d.new(*rec['v'])
+      front = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map do |su, sv|
+        CutEngine.corner(o, u, su * rec['w'] / 2.0, v, sv * rec['h'] / 2.0)
+      end
+      back = front.map { |pt| CutEngine.corner(pt, n, rec['depth'], u, 0) }
+      view.drawing_color = Sketchup::Color.new(255, 140, 0)
+      view.draw(GL_LINE_LOOP, front)
+      view.draw(GL_LINE_LOOP, back)
+      view.draw(GL_LINES, front.zip(back).flatten(1))
+      view.draw_text(view.screen_coords(o), "hole #{rec['id']}")
+    end
+
+    def sync_hole_field
+      return unless @dlg&.visible? && @shown_hole
+      @dlg.execute_script("selHole(#{@shown_hole.to_i})")
+    end
+
+    def push_holes
+      return unless @dlg&.visible?
+      model = Sketchup.active_model
+      list = CutEngine.openings.select { |r| CutEngine.hole_open?(model, r) }
+                                 .map { |r| { id: r['id'], label: self.class.hole_label(r) } }
+      @dlg.execute_script("setHoles(#{list.to_json})")
+    end
+
     def report(msg)
       Sketchup.status_text = "WallCutter: #{msg}"
       nil
@@ -337,9 +497,15 @@ module WallCutter
       @dlg.add_action_callback('ready') do |_c, _|
         @dlg.execute_script("setPresets(#{PRESETS.to_json})")
         push_form
+        push_holes
       end
       @dlg.add_action_callback('preset') { |_c, name| apply_preset(name.to_s) }
       @dlg.add_action_callback('params') { |_c, raw| update_params(raw) }
+      @dlg.add_action_callback('refill') { |_c, raw| refill_selected(raw.to_s == '1') }
+      @dlg.add_action_callback('hole') do |_c, raw|
+        @shown_hole = raw.to_s.to_i.positive? ? raw.to_s.to_i : nil
+        Sketchup.active_model.active_view.invalidate
+      end
       @dlg.add_action_callback('cut') { |_c, _| commit_cut(Sketchup.active_model.active_view) }
       @dlg.show
     end

@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 require 'sketchup.rb'
+require 'json'
 
 module WallCutter
   # All linear values are plain Floats in INCHES (SketchUp's internal length unit).
@@ -62,6 +63,7 @@ module WallCutter
              end
         planes.select! { |t, _f| t <= dl + 0.001 }
         cut_any = false
+        layers = []
         i = 0
         while i + 1 < planes.size
           t_in  = planes[i][0]
@@ -70,11 +72,17 @@ module WallCutter
             i += 1 # duplicate coplanar faces (zero-thickness pair): advance by one
             next
           end
-          cut_any = true if cut_layer(ents, planes[i][1], o, un, ut, vt, wl, hl, t_in, t_out - t_in)
+          if cut_layer(ents, planes[i][1], o, un, ut, vt, wl, hl, t_in, t_out - t_in)
+            cut_any = true
+            layers << [t_in, t_out]
+          end
           i += 2 # pushpull already holed the exit face; skip it as a future entry
         end
         clear_hole_debris(ents, o, un, ut, vt, wl, hl, dl) if cut_any
         if cut_any
+          # Inside the operation: model attributes undo with it, so Ctrl-Z on a cut
+          # drops that cut's registry entry too.
+          record_opening(origin, n, u, v, wl, hl, layers, path, model)
           model.commit_operation
           true
         else
@@ -108,6 +116,152 @@ module WallCutter
         i += 2
       end
       dl
+    end
+
+    # --- hole registry: one entry per successful cut, kept as JSON on the model so it
+    # survives save/reopen. Records are geometry-parameterised (not face references),
+    # so they stay valid after undo/redo churn, moves, or a model reload.
+    # ponytail: origin/n/u/v are world-space, layers are plane offsets measured along
+    # the local un; identical for rigid groups, off by the group scale for scaled ones.
+    # Upgrade path: store world-space plane offsets if scaled wall groups appear.
+    def self.openings(model = Sketchup.active_model)
+      JSON.parse(model.get_attribute('WallCutter', 'openings', '[]'))
+    rescue JSON::ParserError
+      []
+    end
+
+    def self.record_opening(origin, n, u, v, w, h, layers, path, model)
+      list = openings(model)
+      rec = {
+        'id'     => (list.map { |r| r['id'].to_i }.max || 0) + 1,
+        'origin' => origin.to_a, 'n' => n.to_a, 'u' => u.to_a, 'v' => v.to_a,
+        'w' => w, 'h' => h,
+        'depth'  => layers.map { |_t_in, t_out| t_out }.max || 0.0,
+        'layers' => layers,
+        'pids'   => path.map(&:persistent_id)
+      }
+      model.set_attribute('WallCutter', 'openings', JSON.generate(list << rec))
+      rec
+    end
+
+    # Resolve a recorded hole back to its container. 2026 has no find_entity_by_pid,
+    # so walk the stored persistent_ids by scanning each level's entities.
+    # Returns the path array, or nil when a group in the chain is gone.
+    def self.hole_path(model, rec)
+      ents = model.entities
+      path = []
+      (rec['pids'] || []).each do |pid|
+        e = ents.find { |x| x.respond_to?(:persistent_id) && x.persistent_id == pid }
+        return nil unless e.respond_to?(:entities)
+        path << e
+        ents = e.entities
+      end
+      path
+    end
+
+    # Refill is the inverse of what cut_layer leaves behind: lining faces inside the
+    # layer span plus a ring hole in each skin. Erase the lining, re-face both planes
+    # with the recorded rect, then erase the shared boundary edges so the coplanar
+    # pieces merge back into whole skins. Returns false (caller aborts) when a plane
+    # can't be closed - geometry the user changed around the hole.
+    def self.refill(ents, o, un, ut, vt, w, h, layers)
+      done = false
+      layers.each do |t_in, t_out|
+        next if t_out - t_in < 0.001
+        lining = ents.grep(Sketchup::Face).select do |f|
+          d = f.bounds.center - o
+          off = d % un
+          next false unless off > t_in + 0.001 && off < t_out - 0.001
+          pu = d - Geom::Vector3d.new(un.x * off, un.y * off, un.z * off)
+          (pu % ut).abs <= w / 2.0 + 0.5 && (pu % vt).abs <= h / 2.0 + 0.5
+        end
+        ents.erase_entities(lining) unless lining.empty?
+        a = close_plane(ents, o, un, ut, vt, w, h, t_in)
+        b = close_plane(ents, o, un, ut, vt, w, h, t_out)
+        done ||= (a && b)
+      end
+      done
+    end
+
+    # One skin: once the lining is gone the opening's 4 boundary edges belong to the
+    # ring face alone, so erasing them lets that face re-span the rect and the hole
+    # welds shut. (add_face is NOT the way in: on an existing inner loop it returns the
+    # ring itself instead of a filler face - probe-verified, no new face, 8 edges.)
+    # Any boundary edge still carrying a second face means foreign geometry borders the
+    # opening, or the opening sits on the wall's own edge -> refuse rather than half-erase.
+    def self.close_plane(ents, o, un, ut, vt, w, h, t)
+      rim = rim_edges(ents, o, un, ut, vt, w, h, t)
+      return false unless rim.size == 4 && rim.all? { |e| e.faces.size == 1 }
+      ents.erase_entities(rim)
+      true
+    end
+
+    # The 4 edges framing the recorded opening at plane t. They exist only while the
+    # hole is open, so they double as the record's liveness test.
+    # ponytail: linear edge scan per check; index by midpoint if models get huge.
+    def self.rim_edges(ents, o, un, ut, vt, w, h, t)
+      center = Geom::Point3d.new(o.x + un.x * t, o.y + un.y * t, o.z + un.z * t)
+      pts = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map do |su, sv|
+        corner(center, ut, su * w / 2.0, vt, sv * h / 2.0)
+      end
+      ents.grep(Sketchup::Edge).select do |e|
+        vs = e.vertices
+        next false unless vs.size == 2
+        next false unless vs.all? { |v| ((v.position - center) % un).abs < 0.01 }
+        vs.count { |v| pts.any? { |pt| (v.position - pt).length < 0.01 } } == 2
+      end
+    end
+
+    # Is this record's hole still actually open? A refilled or hand-deleted hole must
+    # stop being selectable, or a stale record eats the click meant for the wall behind
+    # it (recorded holes survive a model wipe as pure numbers, so this cannot be skipped).
+    def self.hole_open?(model, rec)
+      return false unless rec
+      path = hole_path(model, rec)
+      return false unless path
+      ents = path.empty? ? model.entities : path.last.entities
+      inv  = world_to_local(path).inverse
+      o  = Geom::Point3d.new(*rec['origin']).transform(inv)
+      un = Geom::Vector3d.new(*rec['n']).transform(inv).normalize
+      ut = Geom::Vector3d.new(*rec['u']).transform(inv).normalize
+      vt = Geom::Vector3d.new(*rec['v']).transform(inv).normalize
+      t_in = rec['layers'].map { |a| a[0].to_f }.min
+      rim_edges(ents, o, un, ut, vt, rec['w'].to_f, rec['h'].to_f, t_in).size == 4
+    rescue StandardError
+      false
+    end
+
+    # Refill a recorded hole as one undo step and forget its registry entry.
+    def self.refill_hole(model, rec)
+      return false unless rec
+      path = hole_path(model, rec)
+      return false unless path
+      ents = path.empty? ? model.entities : path.last.entities
+      inv  = world_to_local(path).inverse
+      o  = Geom::Point3d.new(*rec['origin']).transform(inv)
+      un = Geom::Vector3d.new(*rec['n']).transform(inv).normalize
+      ut = Geom::Vector3d.new(*rec['u']).transform(inv).normalize
+      vt = Geom::Vector3d.new(*rec['v']).transform(inv).normalize
+      layers = rec['layers'].map { |t_in, t_out| [t_in.to_f, t_out.to_f] }
+      model.start_operation('WallCutter refill', true)
+      begin
+        ok = refill(ents, o, un, ut, vt, rec['w'].to_f, rec['h'].to_f, layers)
+        if ok
+          drop_opening(model, rec['id'])
+          model.commit_operation
+        else
+          model.abort_operation # leaves no floating filler face behind
+        end
+        ok
+      rescue StandardError
+        model.abort_operation
+        raise
+      end
+    end
+
+    def self.drop_opening(model, id)
+      list = openings(model).reject { |r| r['id'] == id }
+      model.set_attribute('WallCutter', 'openings', JSON.generate(list))
     end
 
     def self.world_to_local(path)
