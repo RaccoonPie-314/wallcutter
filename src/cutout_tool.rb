@@ -155,6 +155,7 @@ module WallCutter
       @params = PRESETS['Window'].merge(left: nil, depth: nil)
       @units  = { width: 'in', height: 'in', sill: 'in', left: 'in', depth: 'in' }
       @drag   = nil
+      @path   = nil
       @shown_hole = nil # persistent SELECTION (click / dropdown) - what Refill acts on
       @hover_hole = nil # transient, cursor-bound highlight only
       @draw_err_shown = false
@@ -219,7 +220,12 @@ module WallCutter
       ph = view.pick_helper
       ph.do_pick(x, y)
       @shown_hole = nil
-      @face = (ph.path_at(0) || []).grep(Sketchup::Face).last
+      path = ph.path_at(0) || []
+      @face = path.grep(Sketchup::Face).last
+      # The instances the user actually clicked. WallCutter.face_path falls back on
+      # definition.instances.first, which for a component instanced many times is an
+      # arbitrary sibling: wrong transform, cut in the wrong wall.
+      @path = path.select { |e| e.is_a?(Sketchup::Group) || e.is_a?(Sketchup::ComponentInstance) }
       best = ph.best_picked
       @face ||= best if best.is_a?(Sketchup::Face)
       @draw_err_shown = false
@@ -279,8 +285,9 @@ module WallCutter
       end
       origin = frame.center_origin(w, h, @params[:sill], @params[:left])
       ok = CutEngine.cut(origin, frame.n, frame.u, frame.v, w, h, @params[:depth],
-                         path: WallCutter.face_path(@face))
-      report(ok ? 'cut done — click next face or Esc' : 'cut removed nothing — set depth manually')
+                         path: @path || WallCutter.face_path(@face))
+      report(ok ? 'cut done — click next face or Esc'
+                : "cut removed nothing — #{CutEngine.last_failure || 'set depth manually'}")
       push_holes if ok
       view.invalidate
     rescue StandardError => e
@@ -329,7 +336,7 @@ module WallCutter
     # 10k-vertex profiles.
     def current_frame(view)
       @frame ||= begin
-        path    = WallCutter.face_path(@face)
+        path    = @path || WallCutter.face_path(@face)
         tr      = CutEngine.world_to_local(path)
         n_world = @face.normal.transform(tr).normalize
         into    = (n_world % view.camera.direction < 0) ? n_world.reverse : n_world

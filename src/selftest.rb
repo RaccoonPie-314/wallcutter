@@ -120,6 +120,7 @@ module WallCutter
         !CutEngine.cut(Geom::Point3d.new(60.0, -360.0, 54.0), Y_AXIS,
                        X_AXIS, Z_AXIS, 36.0, 48.0, 1.0)
       end
+      check('failed cut reports why') { CutEngine.last_failure.to_s.include?('no face to cut') }
     end
 
     def self.run_group
@@ -311,6 +312,50 @@ module WallCutter
       end
     end
 
+    # Finishes modelled as a single surface (no thickness) and skins behind a wall.
+    def self.run_skin
+      model = Sketchup.active_model
+      ents  = model.entities
+      lone = ents.add_face([2200, 0, 0], [2320, 0, 0], [2320, 0, 108], [2200, 0, 108])
+      skin_faces = ents.grep(Sketchup::Face).length
+      ok = CutEngine.cut(Geom::Point3d.new(2260.0, 0, 54.0), Y_AXIS, X_AXIS, Z_AXIS, 36.0, 48.0)
+      rec = CutEngine.openings(model).last
+      check('skin: cut on a lone surface commits') { ok && lone.valid? }
+      check('skin: face count unchanged (ring left, inner deleted)') do
+        ents.grep(Sketchup::Face).length == skin_faces
+      end
+      check('skin: opening is clear') do
+        model.raytest(Geom::Point3d.new(2260.0, -20.0, 54.0), Y_AXIS).nil?
+      end
+      check('skin: recorded as a zero-thickness layer') { rec && rec['layers'] == [[0.0, 0.0]] }
+      check('skin: refill welds the surface shut') do
+        CutEngine.refill_hole(model, rec) &&
+          !model.raytest(Geom::Point3d.new(2260.0, -20.0, 54.0), Y_AXIS).nil?
+      end
+      # a solid wall with a finish skin 8in behind it: layer + skin both cut
+      box_wall(ents, 2400.0, 120.0, 108.0, 12.0)
+      sk = ents.add_face([2400, 20, 0], [2520, 20, 0], [2520, 20, 108], [2400, 20, 108])
+      both = CutEngine.cut(Geom::Point3d.new(2460.0, 0, 54.0), Y_AXIS, X_AXIS, Z_AXIS, 36.0, 48.0)
+      check('wall + skin behind: both layers cut') do
+        both && sk.valid? && sk.loops.size == 2 &&
+          CutEngine.openings(model).last['layers'].size == 2 &&
+          model.raytest(Geom::Point3d.new(2460.0, -20.0, 54.0), Y_AXIS).nil?
+      end
+      # a lone surface 8ft behind a WALL is a room boundary, not a skin: left alone.
+      # The ray must pass the holed wall and stop ON the intact far surface, so the
+      # check cannot pass vacuously by simply having nothing cut at all.
+      box_wall(ents, 2600.0, 120.0, 108.0, 12.0) # structure y=0..12
+      far = ents.add_face([2600, 96, 0], [2720, 96, 0], [2720, 96, 108], [2600, 96, 108])
+      CutEngine.cut(Geom::Point3d.new(2660.0, 0, 54.0), Y_AXIS, X_AXIS, Z_AXIS, 36.0, 48.0)
+      check('distant lone surface untouched') do
+        hit = WallCutter.ray(model, Geom::Point3d.new(2660.0, -20.0, 54.0), Y_AXIS)
+        if hit.nil? || (hit[0].y - 96.0).abs > 0.5 || far.loops.size != 1
+          puts("  diag: ray=#{hit ? hit[0].to_a.map { |x| x.round(1) }.inspect : 'nil'} far_loops=#{far.loops.size}")
+        end
+        far.valid? && far.loops.size == 1 && !hit.nil? && (hit[0].y - 96.0).abs < 0.5
+      end
+    end
+
     def self.run
       # Start from a clean slate: a recovered/contaminated model (SketchUp restores
       # unsaved work after a force-quit) produces duplicate coplanar faces and lies.
@@ -322,7 +367,7 @@ module WallCutter
       # Explicit transaction around everything: pushpull silently no-ops when the
       # recovered undo stack leaves an unbalanced operation open.
       model.start_operation('WallCutter selftest', true)
-      %i[run_units run_engine run_group run_drill run_frame run_holes run_refill].each do |m|
+      %i[run_units run_engine run_group run_drill run_frame run_holes run_refill run_skin].each do |m|
         begin
           send(m)
         rescue Exception => e
